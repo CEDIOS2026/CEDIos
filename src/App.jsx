@@ -25,7 +25,7 @@ const PERMISOS_LABEL = {
   verBSC: 'Ver Balanced Scorecard',
 };
 const DEFAULT_COMPANY_NAME = 'Cedi';
-const APP_VERSION = 'v4';
+const APP_VERSION = 'v5';
 
 // ---------------------------------------------------------------------------
 // HELPERS
@@ -47,6 +47,27 @@ function krProgress(kr) {
   if (kr.meta === 0) return kr.actual === 0 ? 100 : 0;
   const raw = kr.mejorMayor ? (kr.actual / kr.meta) * 100 : (kr.meta / (kr.actual || 0.0001)) * 100;
   return Math.max(0, Math.min(100, Math.round(raw)));
+}
+
+function antiguedad(fechaIngreso) {
+  if (!fechaIngreso) return null;
+  const inicio = new Date(fechaIngreso + 'T00:00:00');
+  const hoy = new Date();
+  let years = hoy.getFullYear() - inicio.getFullYear();
+  let months = hoy.getMonth() - inicio.getMonth();
+  if (hoy.getDate() < inicio.getDate()) months -= 1;
+  if (months < 0) { years -= 1; months += 12; }
+  if (years < 0) return null;
+  if (years === 0) return `${months} mes${months === 1 ? '' : 'es'}`;
+  return `${years} año${years === 1 ? '' : 's'}${months > 0 ? ` y ${months} mes${months === 1 ? '' : 'es'}` : ''}`;
+}
+
+function diasEntreFechas(inicio, fin) {
+  if (!inicio || !fin) return 0;
+  const a = new Date(inicio + 'T00:00:00');
+  const b = new Date(fin + 'T00:00:00');
+  const diff = Math.round((b - a) / 86400000) + 1;
+  return diff > 0 ? diff : 0;
 }
 
 function downloadCSV(filename, rows) {
@@ -73,6 +94,13 @@ function mapProfile(p) {
     puesto: p.puesto, jefe: p.jefe, funciones: p.funciones || [],
     permisos: { ...PERMISOS_DEFAULT, ...(p.permisos || {}) },
     avatarUrl: p.avatar_url || null, dpuPdfPath: p.dpu_pdf_path || null,
+    fechaIngreso: p.fecha_ingreso || null, diasVacacionesDisponibles: Number(p.dias_vacaciones_disponibles || 0),
+  };
+}
+function mapVacacion(v) {
+  return {
+    id: v.id, personaId: v.persona_id, fechaInicio: v.fecha_inicio, fechaFin: v.fecha_fin,
+    dias: Number(v.dias), estado: v.estado, comentario: v.comentario || '', createdAt: v.created_at,
   };
 }
 function mapKpi(k) {
@@ -227,7 +255,7 @@ function AvatarUploader({ persona, onUploadAvatar }) {
   );
 }
 
-function DpuPdfUploader({ persona, onUploadDpuPdf, onViewDpuPdf }) {
+function DpuPdfUploader({ persona, onUploadDpuPdf, onViewDpuPdf, canUpload = true }) {
   const [busy, setBusy] = useState(false);
   const inputId = `dpu-pdf-${persona.id}`;
 
@@ -241,16 +269,109 @@ function DpuPdfUploader({ persona, onUploadDpuPdf, onViewDpuPdf }) {
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-      {persona.dpuPdfPath && (
+      {persona.dpuPdfPath ? (
         <Btn variant="ghost" onClick={() => onViewDpuPdf(persona.dpuPdfPath)}><FileText size={14} /> Ver DPU en PDF</Btn>
+      ) : !canUpload && (
+        <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>Tu administrador todavía no ha subido tu DPU en PDF.</div>
       )}
-      <label htmlFor={inputId} style={{ cursor: 'pointer' }}>
-        <span style={{ fontSize: 12, color: 'var(--blue)', fontWeight: 600 }}>
-          {busy ? 'Subiendo…' : persona.dpuPdfPath ? 'Reemplazar PDF' : 'Subir DPU en PDF'}
-        </span>
-        <input id={inputId} type="file" accept="application/pdf" onChange={handleFile} style={{ display: 'none' }} disabled={busy} />
-      </label>
+      {canUpload && (
+        <label htmlFor={inputId} style={{ cursor: 'pointer' }}>
+          <span style={{ fontSize: 12, color: 'var(--blue)', fontWeight: 600 }}>
+            {busy ? 'Subiendo…' : persona.dpuPdfPath ? 'Reemplazar PDF' : 'Subir DPU en PDF'}
+          </span>
+          <input id={inputId} type="file" accept="application/pdf" onChange={handleFile} style={{ display: 'none' }} disabled={busy} />
+        </label>
+      )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// MI PERFIL — fecha de ingreso, vacaciones disponibles, y solicitud de vacaciones
+// ---------------------------------------------------------------------------
+const VAC_ESTADO_LABEL = { pendiente: 'Pendiente', aprobada: 'Aprobada', rechazada: 'Rechazada' };
+const VAC_ESTADO_COLOR = { pendiente: 'var(--amber)', aprobada: 'var(--green)', rechazada: 'var(--red)' };
+
+function MiPerfilPanel({ user, vacaciones, onRequestVacation, onCancelVacation }) {
+  const [open, setOpen] = useState(false);
+  const [fechaInicio, setFechaInicio] = useState('');
+  const [fechaFin, setFechaFin] = useState('');
+  const dias = diasEntreFechas(fechaInicio, fechaFin);
+  const misSolicitudes = vacaciones
+    .filter(v => v.personaId === user.id)
+    .slice()
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  const diasUsadosOPendientes = misSolicitudes
+    .filter(v => v.estado !== 'rechazada')
+    .reduce((s, v) => s + v.dias, 0);
+  const disponiblesRestantes = Math.max(0, (user.diasVacacionesDisponibles || 0) - diasUsadosOPendientes);
+
+  function solicitar() {
+    if (!fechaInicio || !fechaFin || dias <= 0) return;
+    onRequestVacation(fechaInicio, fechaFin, dias);
+    setFechaInicio(''); setFechaFin('');
+  }
+
+  return (
+    <Panel>
+      <button onClick={() => setOpen(o => !o)} style={{
+        all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+      }}>
+        {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+        <span style={{ fontSize: 15, fontWeight: 700 }}>Mi Perfil</span>
+      </button>
+      {open && (
+        <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 18 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24 }}>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>Fecha de ingreso</div>
+              <div style={{ fontSize: 16, fontWeight: 600 }}>
+                {user.fechaIngreso ? new Date(user.fechaIngreso + 'T00:00:00').toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Sin registrar'}
+              </div>
+              {user.fechaIngreso && <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>{antiguedad(user.fechaIngreso)} de antigüedad</div>}
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>Días de vacaciones disponibles</div>
+              <div style={{ fontSize: 16, fontWeight: 600 }}>{disponiblesRestantes} de {user.diasVacacionesDisponibles || 0}</div>
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Solicitar vacaciones</div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+              <div>
+                <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 4 }}>Desde</div>
+                <Input type="date" value={fechaInicio} onChange={e => setFechaInicio(e.target.value)} style={{ width: 160 }} />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 4 }}>Hasta</div>
+                <Input type="date" value={fechaFin} onChange={e => setFechaFin(e.target.value)} style={{ width: 160 }} />
+              </div>
+              {fechaInicio && fechaFin && <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>{dias} día{dias === 1 ? '' : 's'}</div>}
+              <Btn onClick={solicitar} disabled={!fechaInicio || !fechaFin || dias <= 0}>Solicitar</Btn>
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Tus solicitudes</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {misSolicitudes.map(v => (
+                <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
+                  <span style={{ flex: 1 }}>{v.fechaInicio} → {v.fechaFin} ({v.dias} día{v.dias === 1 ? '' : 's'})</span>
+                  <span style={{ color: VAC_ESTADO_COLOR[v.estado], fontWeight: 600 }}>{VAC_ESTADO_LABEL[v.estado]}</span>
+                  {v.estado === 'pendiente' && (
+                    <button onClick={() => onCancelVacation(v.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)' }}>
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
+              ))}
+              {misSolicitudes.length === 0 && <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>Todavía no has solicitado vacaciones.</div>}
+            </div>
+          </div>
+        </div>
+      )}
+    </Panel>
   );
 }
 
@@ -399,7 +520,7 @@ function HomeView({ user, teams, equipos, kpis, okrsEquipo, activities, onGo }) 
   );
 }
 
-function DPUView({ user, teams, equipos, kpis, okrsEquipo, onUploadAvatar, onUploadDpuPdf, onViewDpuPdf }) {
+function DPUView({ user, teams, equipos, kpis, okrsEquipo, vacaciones, onUploadAvatar, onViewDpuPdf, onRequestVacation, onCancelVacation }) {
   const team = teams.find(t => t.id === user.teamId);
   const equipo = equipos.find(e => e.id === user.equipoId);
   const myKpis = kpis.filter(k => (user.teamId ? k.teamId === user.teamId : k.teamId === null));
@@ -425,7 +546,7 @@ function DPUView({ user, teams, equipos, kpis, okrsEquipo, onUploadAvatar, onUpl
           {user.funciones.map((f, i) => <li key={i} style={{ fontSize: 14 }}>{f}</li>)}
         </ul>
         <div className="no-print" style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
-          <DpuPdfUploader persona={user} onUploadDpuPdf={onUploadDpuPdf} onViewDpuPdf={onViewDpuPdf} />
+          <DpuPdfUploader persona={user} onViewDpuPdf={onViewDpuPdf} canUpload={false} />
         </div>
       </Panel>
 
@@ -475,6 +596,8 @@ function DPUView({ user, teams, equipos, kpis, okrsEquipo, onUploadAvatar, onUpl
           {myOkrs.length === 0 && <div style={{ fontSize: 14, color: 'var(--text-dim)' }}>Sin OKR definidos todavía.</div>}
         </div>
       </Panel>
+
+      <MiPerfilPanel user={user} vacaciones={vacaciones} onRequestVacation={onRequestVacation} onCancelVacation={onCancelVacation} />
     </div>
   );
 }
@@ -818,19 +941,24 @@ function BSCView({ kpis, teams }) {
 // ---------------------------------------------------------------------------
 // ADMIN VIEW
 // ---------------------------------------------------------------------------
-function UserRow({ user, team, teams, equipos, onSaveProfile, onTogglePermiso, onUploadAvatar, onUploadDpuPdf, onViewDpuPdf }) {
+function UserRow({ user, team, teams, equipos, onSaveProfile, onTogglePermiso, onUploadAvatar, onUploadDpuPdf, onViewDpuPdf, vacaciones, onReviewVacation }) {
   const [open, setOpen] = useState(false);
   const isAdmin = user.role === 'admin';
   const isLider = user.role === 'lider';
-  const [form, setForm] = useState({ name: user.name, puesto: user.puesto, jefe: user.jefe, role: user.role, teamId: user.teamId || '', equipoId: user.equipoId || '', funciones: (user.funciones || []).join('\n') });
+  const [form, setForm] = useState({
+    name: user.name, puesto: user.puesto, jefe: user.jefe, role: user.role, teamId: user.teamId || '', equipoId: user.equipoId || '',
+    funciones: (user.funciones || []).join('\n'), fechaIngreso: user.fechaIngreso || '', diasVacacionesDisponibles: user.diasVacacionesDisponibles || 0,
+  });
 
   const equiposDeArea = equipos.filter(e => e.teamId === form.teamId);
+  const solicitudesPendientes = vacaciones.filter(v => v.personaId === user.id && v.estado === 'pendiente');
 
   function save() {
     onSaveProfile(user.id, {
       name: form.name, puesto: form.puesto, jefe: form.jefe, role: form.role,
       teamId: form.teamId || null, equipoId: form.equipoId || null,
       funciones: form.funciones.split('\n').map(s => s.trim()).filter(Boolean),
+      fechaIngreso: form.fechaIngreso || null, diasVacacionesDisponibles: parseFloat(form.diasVacacionesDisponibles) || 0,
     });
   }
 
@@ -839,6 +967,9 @@ function UserRow({ user, team, teams, equipos, onSaveProfile, onTogglePermiso, o
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13 }}>
         <Avatar url={user.avatarUrl} name={user.name} size={28} />
         <span style={{ flex: 1 }}>{user.name} — {user.puesto}</span>
+        {solicitudesPendientes.length > 0 && (
+          <span style={{ fontSize: 11, color: 'var(--amber)', fontWeight: 600 }}>{solicitudesPendientes.length} vacación pendiente</span>
+        )}
         <span style={{ color: 'var(--text-dim)', width: 110 }}>{ROLE_LABEL[user.role]}</span>
         <span style={{ color: 'var(--text-dim)', width: 90 }}>{team ? team.name : '—'}</span>
         <button onClick={() => setOpen(o => !o)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 3, fontSize: 12 }}>
@@ -866,6 +997,14 @@ function UserRow({ user, team, teams, equipos, onSaveProfile, onTogglePermiso, o
             </Select>
             <Input placeholder="Puesto" value={form.puesto} onChange={e => setForm({ ...form, puesto: e.target.value })} />
             <Input placeholder="Jefe directo" value={form.jefe} onChange={e => setForm({ ...form, jefe: e.target.value })} />
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>Fecha de ingreso</div>
+              <Input type="date" value={form.fechaIngreso} onChange={e => setForm({ ...form, fechaIngreso: e.target.value })} />
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>Días de vacaciones al año</div>
+              <Input type="number" min="0" value={form.diasVacacionesDisponibles} onChange={e => setForm({ ...form, diasVacacionesDisponibles: e.target.value })} />
+            </div>
           </div>
           <textarea
             placeholder="Funciones clave (una por línea)" value={form.funciones} rows={3}
@@ -874,6 +1013,27 @@ function UserRow({ user, team, teams, equipos, onSaveProfile, onTogglePermiso, o
           />
           <Btn onClick={save} style={{ alignSelf: 'flex-start' }}>Guardar cambios</Btn>
           <DpuPdfUploader persona={user} onUploadDpuPdf={onUploadDpuPdf} onViewDpuPdf={onViewDpuPdf} />
+
+          {vacaciones.filter(v => v.personaId === user.id).length > 0 && (
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 6 }}>Solicitudes de vacaciones</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {vacaciones.filter(v => v.personaId === user.id).map(v => (
+                  <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13 }}>
+                    <span style={{ flex: 1 }}>{v.fechaInicio} → {v.fechaFin} ({v.dias} día{v.dias === 1 ? '' : 's'})</span>
+                    {v.estado === 'pendiente' ? (
+                      <>
+                        <Btn variant="ghost" onClick={() => onReviewVacation(v.id, 'aprobada')} style={{ padding: '4px 10px', fontSize: 12 }}>Aprobar</Btn>
+                        <Btn variant="danger" onClick={() => onReviewVacation(v.id, 'rechazada')} style={{ padding: '4px 10px', fontSize: 12 }}>Rechazar</Btn>
+                      </>
+                    ) : (
+                      <span style={{ color: VAC_ESTADO_COLOR[v.estado], fontWeight: 600 }}>{VAC_ESTADO_LABEL[v.estado]}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {isLider && (
             <div style={{ fontSize: 12, color: 'var(--text-dim)', background: 'var(--panel-alt)', borderRadius: 10, padding: '8px 10px' }}>
@@ -900,7 +1060,7 @@ function UserRow({ user, team, teams, equipos, onSaveProfile, onTogglePermiso, o
   );
 }
 
-function AdminView({ empresaName, teams, equipos, users, onSaveEmpresa, onAddTeam, onRemoveTeam, onAddEquipo, onRemoveEquipo, onSaveProfile, onTogglePermiso, onUploadAvatar, onUploadDpuPdf, onViewDpuPdf }) {
+function AdminView({ empresaName, teams, equipos, users, vacaciones, onSaveEmpresa, onAddTeam, onRemoveTeam, onAddEquipo, onRemoveEquipo, onSaveProfile, onTogglePermiso, onUploadAvatar, onUploadDpuPdf, onViewDpuPdf, onReviewVacation }) {
   const [newTeamName, setNewTeamName] = useState('');
   const [newEquipoTeamId, setNewEquipoTeamId] = useState('');
   const [newEquipoName, setNewEquipoName] = useState('');
@@ -970,6 +1130,7 @@ function AdminView({ empresaName, teams, equipos, users, onSaveEmpresa, onAddTea
               key={u.id} user={u} team={teams.find(t => t.id === u.teamId)} teams={teams} equipos={equipos}
               onSaveProfile={onSaveProfile} onTogglePermiso={onTogglePermiso}
               onUploadAvatar={onUploadAvatar} onUploadDpuPdf={onUploadDpuPdf} onViewDpuPdf={onViewDpuPdf}
+              vacaciones={vacaciones} onReviewVacation={onReviewVacation}
             />
           ))}
         </div>
@@ -1011,7 +1172,9 @@ function DesempenoView(props) {
       {tab === 'dpu' && (
         <DPUView
           user={props.user} teams={props.teams} equipos={props.equipos} kpis={props.kpis} okrsEquipo={props.okrsEquipo}
-          onUploadAvatar={props.onUploadAvatar} onUploadDpuPdf={props.onUploadDpuPdf} onViewDpuPdf={props.onViewDpuPdf}
+          vacaciones={props.vacaciones}
+          onUploadAvatar={props.onUploadAvatar} onViewDpuPdf={props.onViewDpuPdf}
+          onRequestVacation={props.onRequestVacation} onCancelVacation={props.onCancelVacation}
         />
       )}
       {tab === 'kpis' && <KPIsView user={props.user} teams={props.teams} kpis={props.kpis} onUpdateActual={props.onUpdateActual} />}
@@ -1020,7 +1183,7 @@ function DesempenoView(props) {
   );
 }
 
-function EquipoView({ user, teams, equipos, users, onSaveProfile, onUploadAvatar, onUploadDpuPdf, onViewDpuPdf }) {
+function EquipoView({ user, teams, equipos, users, onSaveProfile, onUploadAvatar, onViewDpuPdf }) {
   const team = teams.find(t => t.id === user.teamId);
   const misCompaneros = users.filter(u => u.teamId === user.teamId && u.id !== user.id);
   const misEquipos = equipos.filter(e => e.teamId === user.teamId);
@@ -1033,7 +1196,7 @@ function EquipoView({ user, teams, equipos, users, onSaveProfile, onUploadAvatar
           {misCompaneros.map(u => (
             <LiderPersonaRow
               key={u.id} persona={u} equipos={misEquipos} onSaveProfile={onSaveProfile}
-              onUploadAvatar={onUploadAvatar} onUploadDpuPdf={onUploadDpuPdf} onViewDpuPdf={onViewDpuPdf}
+              onUploadAvatar={onUploadAvatar} onViewDpuPdf={onViewDpuPdf}
             />
           ))}
           {misCompaneros.length === 0 && <div style={{ fontSize: 14, color: 'var(--text-dim)' }}>Todavía no hay más personas en tu área.</div>}
@@ -1043,7 +1206,7 @@ function EquipoView({ user, teams, equipos, users, onSaveProfile, onUploadAvatar
   );
 }
 
-function LiderPersonaRow({ persona, equipos, onSaveProfile, onUploadAvatar, onUploadDpuPdf, onViewDpuPdf }) {
+function LiderPersonaRow({ persona, equipos, onSaveProfile, onUploadAvatar, onViewDpuPdf }) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ puesto: persona.puesto, jefe: persona.jefe, equipoId: persona.equipoId || '', funciones: (persona.funciones || []).join('\n') });
 
@@ -1082,7 +1245,7 @@ function LiderPersonaRow({ persona, equipos, onSaveProfile, onUploadAvatar, onUp
             style={{ width: '100%', boxSizing: 'border-box', background: '#fff', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text)', padding: '10px 12px', fontSize: 14, fontFamily: "'Plus Jakarta Sans', sans-serif", resize: 'vertical' }}
           />
           <Btn onClick={save} style={{ alignSelf: 'flex-start' }}>Guardar cambios</Btn>
-          <DpuPdfUploader persona={persona} onUploadDpuPdf={onUploadDpuPdf} onViewDpuPdf={onViewDpuPdf} />
+          <DpuPdfUploader persona={persona} onViewDpuPdf={onViewDpuPdf} canUpload={false} />
           <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>El rol y el área solo los puede cambiar un administrador.</div>
         </div>
       )}
@@ -1103,6 +1266,7 @@ export default function App() {
   const [kpis, setKpis] = useState([]);
   const [okrsEquipo, setOkrsEquipo] = useState([]);
   const [activities, setActivities] = useState([]);
+  const [vacaciones, setVacaciones] = useState([]);
   const [empresaName, setEmpresaName] = useState(DEFAULT_COMPANY_NAME);
   const [view, setView] = useState('inicio');
   const [loadError, setLoadError] = useState('');
@@ -1122,12 +1286,13 @@ export default function App() {
     const mappedUsers = (profileRows || []).map(mapProfile);
     const usersById = Object.fromEntries(mappedUsers.map(u => [u.id, u]));
 
-    const [{ data: kpiRows, error: e3 }, { data: okrRows, error: e4 }, { data: actRows, error: e5 }] = await Promise.all([
+    const [{ data: kpiRows, error: e3 }, { data: okrRows, error: e4 }, { data: actRows, error: e5 }, { data: vacRows, error: e6 }] = await Promise.all([
       supabase.from('kpis').select('*, kpi_historial(fecha, valor)'),
       supabase.from('okrs_equipo').select('*, okr_krs(*)'),
       supabase.from('activities').select('*, activity_comentarios(*)').order('created_at', { ascending: false }),
+      supabase.from('vacaciones').select('*').order('created_at', { ascending: false }),
     ]);
-    if (e3 || e4 || e5) { setLoadError((e3 || e4 || e5).message); return; }
+    if (e3 || e4 || e5 || e6) { setLoadError((e3 || e4 || e5 || e6).message); return; }
 
     setTeams(mappedTeams);
     setEquipos(mappedEquipos);
@@ -1135,6 +1300,7 @@ export default function App() {
     setKpis((kpiRows || []).map(mapKpi));
     setOkrsEquipo((okrRows || []).map(mapOkr));
     setActivities((actRows || []).map(a => mapActivity(a, usersById)));
+    setVacaciones((vacRows || []).map(mapVacacion));
     if (empresaRows && empresaRows[0]) setEmpresaName(empresaRows[0].name);
 
     const me = usersById[sess.user.id];
@@ -1223,6 +1389,8 @@ export default function App() {
     await supabase.from('profiles').update({
       name: fields.name, puesto: fields.puesto, jefe: fields.jefe, role: fields.role,
       team_id: fields.teamId, equipo_id: fields.equipoId, funciones: fields.funciones,
+      ...(fields.fechaIngreso !== undefined ? { fecha_ingreso: fields.fechaIngreso } : {}),
+      ...(fields.diasVacacionesDisponibles !== undefined ? { dias_vacaciones_disponibles: fields.diasVacacionesDisponibles } : {}),
     }).eq('id', id);
     fetchAll(session);
   }
@@ -1253,6 +1421,18 @@ export default function App() {
     const { data, error } = await supabase.storage.from('dpu-docs').createSignedUrl(path, 60);
     if (error) { setLoadError(error.message); return; }
     window.open(data.signedUrl, '_blank');
+  }
+  async function requestVacation(fechaInicio, fechaFin, dias) {
+    await supabase.from('vacaciones').insert({ persona_id: currentUser.id, fecha_inicio: fechaInicio, fecha_fin: fechaFin, dias, estado: 'pendiente' });
+    fetchAll(session);
+  }
+  async function cancelVacation(id) {
+    await supabase.from('vacaciones').delete().eq('id', id);
+    fetchAll(session);
+  }
+  async function reviewVacation(id, estado) {
+    await supabase.from('vacaciones').update({ estado, revisado_por: currentUser.id, revisado_at: new Date().toISOString() }).eq('id', id);
+    fetchAll(session);
   }
 
   const fontImport = (
@@ -1364,22 +1544,23 @@ export default function App() {
           <DesempenoView
             user={currentUser} teams={teams} equipos={equipos} kpis={kpis} okrsEquipo={okrsEquipo}
             onUpdateActual={updateActual} isAdmin={isAdmin} canSeeBSC={canSeeBSC}
-            onUploadAvatar={uploadAvatar} onUploadDpuPdf={uploadDpuPdf} onViewDpuPdf={viewDpuPdf}
+            onUploadAvatar={uploadAvatar} onViewDpuPdf={viewDpuPdf}
+            vacaciones={vacaciones} onRequestVacation={requestVacation} onCancelVacation={cancelVacation}
           />
         )}
         {view === 'objetivos' && <OKRsView user={currentUser} teams={teams} okrsEquipo={okrsEquipo} onUpdateKrActual={updateKrActual} onAddOkr={addOkr} />}
         {view === 'equipo' && isLider && (
           <EquipoView
             user={currentUser} teams={teams} equipos={equipos} users={users} onSaveProfile={saveProfile}
-            onUploadAvatar={uploadAvatar} onUploadDpuPdf={uploadDpuPdf} onViewDpuPdf={viewDpuPdf}
+            onUploadAvatar={uploadAvatar} onViewDpuPdf={viewDpuPdf}
           />
         )}
         {view === 'admin' && isAdmin && (
           <AdminView
-            empresaName={empresaName} teams={teams} equipos={equipos} users={users}
+            empresaName={empresaName} teams={teams} equipos={equipos} users={users} vacaciones={vacaciones}
             onSaveEmpresa={saveEmpresa} onAddTeam={addTeam} onRemoveTeam={removeTeam}
             onAddEquipo={addEquipo} onRemoveEquipo={removeEquipo} onSaveProfile={saveProfile} onTogglePermiso={togglePermiso}
-            onUploadAvatar={uploadAvatar} onUploadDpuPdf={uploadDpuPdf} onViewDpuPdf={viewDpuPdf}
+            onUploadAvatar={uploadAvatar} onUploadDpuPdf={uploadDpuPdf} onViewDpuPdf={viewDpuPdf} onReviewVacation={reviewVacation}
           />
         )}
       </div>
