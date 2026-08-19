@@ -1704,7 +1704,7 @@ export default function App() {
   const canSeeBSC = hasPerm(currentUser, 'verBSC');
   const NAV_FULL = [
     { id: 'inicio', label: 'Inicio', icon: Home },
-    { id: 'trabajo', label: 'Mi trabajo', icon: ClipboardList },
+    { id: 'trabajo', label: 'Mis tareas', icon: ClipboardList },
     { id: 'desempeno', label: 'Desempeño', icon: BarChart3 },
     { id: 'objetivos', label: 'Objetivos', icon: Target },
     { id: 'equipo', label: 'Mi Equipo', icon: Users2 },
