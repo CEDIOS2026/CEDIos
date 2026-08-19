@@ -25,7 +25,7 @@ const PERMISOS_LABEL = {
   verBSC: 'Ver Balanced Scorecard',
 };
 const DEFAULT_COMPANY_NAME = 'Cedi';
-const APP_VERSION = 'v7';
+const APP_VERSION = 'v8';
 
 // ---------------------------------------------------------------------------
 // HELPERS
@@ -95,7 +95,14 @@ function mapProfile(p) {
     permisos: { ...PERMISOS_DEFAULT, ...(p.permisos || {}) },
     avatarUrl: p.avatar_url || null, dpuPdfPath: p.dpu_pdf_path || null,
     fechaIngreso: p.fecha_ingreso || null, diasVacacionesDisponibles: Number(p.dias_vacaciones_disponibles || 0),
+    positionId: p.position_id || null,
   };
+}
+function mapPosition(p) {
+  return { id: p.id, name: p.name, active: p.active };
+}
+function mapResponsibility(r) {
+  return { id: r.id, positionId: r.position_id, name: r.name, description: r.description || '', orderIndex: r.order_index, active: r.active };
 }
 function mapVacacion(v) {
   return {
@@ -535,11 +542,14 @@ function HomeView({ user, teams, equipos, kpis, okrsEquipo, activities, vacacion
   );
 }
 
-function DPUView({ user, teams, equipos, kpis, okrsEquipo, vacaciones, onUploadAvatar, onViewDpuPdf, onRequestVacation, onCancelVacation }) {
+function DPUView({ user, teams, equipos, kpis, okrsEquipo, responsibilities, vacaciones, onUploadAvatar, onViewDpuPdf, onRequestVacation, onCancelVacation }) {
   const team = teams.find(t => t.id === user.teamId);
   const equipo = equipos.find(e => e.id === user.equipoId);
   const myKpis = kpis.filter(k => (user.teamId ? k.teamId === user.teamId : k.teamId === null));
   const myOkrs = user.teamId ? okrsEquipo.filter(o => o.teamId === user.teamId) : okrsEquipo;
+  const misResponsabilidades = user.positionId
+    ? responsibilities.filter(r => r.positionId === user.positionId && r.active).slice().sort((a, b) => a.orderIndex - b.orderIndex)
+    : [];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -557,9 +567,17 @@ function DPUView({ user, teams, equipos, kpis, okrsEquipo, vacaciones, onUploadA
           <div><div style={{ fontSize: 12, color: 'var(--text-dim)' }}>Jefe directo</div><div style={{ fontSize: 18, fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 600 }}>{user.jefe}</div></div>
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 6 }}>Funciones clave</div>
-        <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 16 }}>
           {user.funciones.map((f, i) => <li key={i} style={{ fontSize: 14 }}>{f}</li>)}
         </ul>
+        <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 6 }}>Responsabilidades del puesto</div>
+        {misResponsabilidades.length > 0 ? (
+          <ol style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {misResponsabilidades.map(r => <li key={r.id} style={{ fontSize: 14 }}>{r.name}</li>)}
+          </ol>
+        ) : (
+          <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>Todavía no hay responsabilidades definidas para tu puesto.</div>
+        )}
         <div className="no-print" style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
           <DpuPdfUploader persona={user} onViewDpuPdf={onViewDpuPdf} canUpload={false} />
         </div>
@@ -971,21 +989,22 @@ function BSCView({ kpis, teams }) {
 // ---------------------------------------------------------------------------
 // ADMIN VIEW
 // ---------------------------------------------------------------------------
-function UserRow({ user, team, teams, equipos, onSaveProfile, onTogglePermiso, onUploadAvatar, onUploadDpuPdf, onViewDpuPdf, vacaciones, onReviewVacation }) {
+function UserRow({ user, team, teams, equipos, positions, onSaveProfile, onTogglePermiso, onUploadAvatar, onUploadDpuPdf, onViewDpuPdf, vacaciones, onReviewVacation }) {
   const [open, setOpen] = useState(false);
   const isAdmin = user.role === 'admin';
   const isLider = user.role === 'lider';
   const [form, setForm] = useState({
-    name: user.name, puesto: user.puesto, jefe: user.jefe, role: user.role, teamId: user.teamId || '', equipoId: user.equipoId || '',
+    name: user.name, positionId: user.positionId || '', jefe: user.jefe, role: user.role, teamId: user.teamId || '', equipoId: user.equipoId || '',
     funciones: (user.funciones || []).join('\n'), fechaIngreso: user.fechaIngreso || '', diasVacacionesDisponibles: user.diasVacacionesDisponibles || 0,
   });
 
   const equiposDeArea = equipos.filter(e => e.teamId === form.teamId);
+  const availablePositions = positions.filter(p => p.active || p.id === form.positionId);
   const solicitudesPendientes = vacaciones.filter(v => v.personaId === user.id && v.estado === 'pendiente');
 
   function save() {
     onSaveProfile(user.id, {
-      name: form.name, puesto: form.puesto, jefe: form.jefe, role: form.role,
+      name: form.name, positionId: form.positionId || null, jefe: form.jefe, role: form.role,
       teamId: form.teamId || null, equipoId: form.equipoId || null,
       funciones: form.funciones.split('\n').map(s => s.trim()).filter(Boolean),
       fechaIngreso: form.fechaIngreso || null, diasVacacionesDisponibles: parseFloat(form.diasVacacionesDisponibles) || 0,
@@ -1025,7 +1044,10 @@ function UserRow({ user, team, teams, equipos, onSaveProfile, onTogglePermiso, o
               <option value="">Sin equipo específico</option>
               {equiposDeArea.map(eq => <option key={eq.id} value={eq.id}>{eq.name}</option>)}
             </Select>
-            <Input placeholder="Puesto" value={form.puesto} onChange={e => setForm({ ...form, puesto: e.target.value })} />
+            <Select value={form.positionId} onChange={e => setForm({ ...form, positionId: e.target.value })}>
+              <option value="">Sin puesto asignado</option>
+              {availablePositions.map(p => <option key={p.id} value={p.id}>{p.name}{!p.active ? ' (inactivo)' : ''}</option>)}
+            </Select>
             <Input placeholder="Jefe directo" value={form.jefe} onChange={e => setForm({ ...form, jefe: e.target.value })} />
             <div>
               <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>Fecha de ingreso</div>
@@ -1090,11 +1112,17 @@ function UserRow({ user, team, teams, equipos, onSaveProfile, onTogglePermiso, o
   );
 }
 
-function AdminView({ empresaName, teams, equipos, users, vacaciones, onSaveEmpresa, onAddTeam, onRemoveTeam, onAddEquipo, onRemoveEquipo, onSaveProfile, onTogglePermiso, onUploadAvatar, onUploadDpuPdf, onViewDpuPdf, onReviewVacation }) {
+function AdminView({
+  empresaName, teams, equipos, users, positions, responsibilities, vacaciones,
+  onSaveEmpresa, onAddTeam, onRemoveTeam, onAddEquipo, onRemoveEquipo, onSaveProfile, onTogglePermiso,
+  onUploadAvatar, onUploadDpuPdf, onViewDpuPdf, onReviewVacation,
+  onAddPosition, onTogglePositionActive, onAddResponsibility, onSaveResponsibility, onToggleResponsibilityActive, onMoveResponsibility,
+}) {
   const [newTeamName, setNewTeamName] = useState('');
   const [newEquipoTeamId, setNewEquipoTeamId] = useState('');
   const [newEquipoName, setNewEquipoName] = useState('');
   const [companyDraft, setCompanyDraft] = useState(empresaName);
+  const [newPositionName, setNewPositionName] = useState('');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -1153,11 +1181,30 @@ function AdminView({ empresaName, teams, equipos, users, vacaciones, onSaveEmpre
       </Panel>
 
       <Panel>
+        <Eyebrow>Puestos y responsabilidades</Eyebrow>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          {positions.map(p => (
+            <PositionRow
+              key={p.id} position={p} responsibilities={responsibilities.filter(r => r.positionId === p.id)}
+              onTogglePositionActive={onTogglePositionActive} onAddResponsibility={onAddResponsibility}
+              onSaveResponsibility={onSaveResponsibility} onToggleResponsibilityActive={onToggleResponsibilityActive}
+              onMoveResponsibility={onMoveResponsibility}
+            />
+          ))}
+          {positions.length === 0 && <div style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 8 }}>Todavía no hay puestos en el catálogo.</div>}
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          <Input placeholder="Nombre del nuevo puesto" value={newPositionName} onChange={e => setNewPositionName(e.target.value)} />
+          <Btn onClick={() => { if (newPositionName.trim()) { onAddPosition(newPositionName.trim()); setNewPositionName(''); } }}><Plus size={15} /> Agregar puesto</Btn>
+        </div>
+      </Panel>
+
+      <Panel>
         <Eyebrow>Usuarios y permisos</Eyebrow>
         <div style={{ display: 'flex', flexDirection: 'column', marginBottom: 12 }}>
           {users.map(u => (
             <UserRow
-              key={u.id} user={u} team={teams.find(t => t.id === u.teamId)} teams={teams} equipos={equipos}
+              key={u.id} user={u} team={teams.find(t => t.id === u.teamId)} teams={teams} equipos={equipos} positions={positions}
               onSaveProfile={onSaveProfile} onTogglePermiso={onTogglePermiso}
               onUploadAvatar={onUploadAvatar} onUploadDpuPdf={onUploadDpuPdf} onViewDpuPdf={onViewDpuPdf}
               vacaciones={vacaciones} onReviewVacation={onReviewVacation}
@@ -1170,6 +1217,79 @@ function AdminView({ empresaName, teams, equipos, users, vacaciones, onSaveEmpre
           área, equipo, puesto, rol y permisos. Para quitarle el acceso a alguien, bórralo desde esa misma pantalla de Supabase.
         </div>
       </Panel>
+    </div>
+  );
+}
+
+function PositionRow({ position, responsibilities, onTogglePositionActive, onAddResponsibility, onSaveResponsibility, onToggleResponsibilityActive, onMoveResponsibility }) {
+  const [open, setOpen] = useState(false);
+  const [newRespName, setNewRespName] = useState('');
+  const ordered = responsibilities.slice().sort((a, b) => a.orderIndex - b.orderIndex);
+
+  return (
+    <div style={{ borderBottom: '1px solid var(--border)', padding: '8px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 14 }}>
+        <span style={{ flex: 1 }}>{position.name}</span>
+        {!position.active && <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>(inactivo)</span>}
+        <Btn variant="ghost" onClick={() => onTogglePositionActive(position.id, !position.active)} style={{ padding: '4px 10px', fontSize: 12 }}>
+          {position.active ? 'Desactivar' : 'Reactivar'}
+        </Btn>
+        <button onClick={() => setOpen(o => !o)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 3, fontSize: 12 }}>
+          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />} Responsabilidades
+        </button>
+      </div>
+      {open && (
+        <div style={{ marginTop: 10, marginLeft: 20, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {ordered.map((r, i) => (
+            <ResponsibilityRow
+              key={r.id} responsibility={r} isFirst={i === 0} isLast={i === ordered.length - 1}
+              onSaveResponsibility={onSaveResponsibility} onToggleResponsibilityActive={onToggleResponsibilityActive}
+              onMove={dir => onMoveResponsibility(position.id, r.id, dir)}
+            />
+          ))}
+          {ordered.length === 0 && <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>Sin responsabilidades todavía.</div>}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Input placeholder="Nueva responsabilidad" value={newRespName} onChange={e => setNewRespName(e.target.value)} />
+            <Btn onClick={() => { if (newRespName.trim()) { onAddResponsibility(position.id, newRespName.trim()); setNewRespName(''); } }}><Plus size={15} /> Agregar</Btn>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ResponsibilityRow({ responsibility, isFirst, isLast, onSaveResponsibility, onToggleResponsibilityActive, onMove }) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(responsibility.name);
+  const [description, setDescription] = useState(responsibility.description);
+
+  function save() {
+    onSaveResponsibility(responsibility.id, { name, description });
+    setEditing(false);
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
+      {editing ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <Input value={name} onChange={e => setName(e.target.value)} />
+          <Input placeholder="Descripción (opcional)" value={description} onChange={e => setDescription(e.target.value)} />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Btn onClick={save} style={{ padding: '4px 10px', fontSize: 12 }}>Guardar</Btn>
+            <Btn variant="ghost" onClick={() => setEditing(false)} style={{ padding: '4px 10px', fontSize: 12 }}>Cancelar</Btn>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button onClick={() => onMove('up')} disabled={isFirst} style={{ background: 'none', border: 'none', cursor: isFirst ? 'default' : 'pointer', color: isFirst ? 'var(--border)' : 'var(--text-dim)', padding: 0 }}>▲</button>
+          <button onClick={() => onMove('down')} disabled={isLast} style={{ background: 'none', border: 'none', cursor: isLast ? 'default' : 'pointer', color: isLast ? 'var(--border)' : 'var(--text-dim)', padding: 0 }}>▼</button>
+          <span style={{ flex: 1, opacity: responsibility.active ? 1 : 0.5 }}>{responsibility.name}{!responsibility.active ? ' (inactiva)' : ''}</span>
+          <button onClick={() => setEditing(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--blue)', fontSize: 12 }}>Editar</button>
+          <Btn variant="ghost" onClick={() => onToggleResponsibilityActive(responsibility.id, !responsibility.active)} style={{ padding: '3px 8px', fontSize: 11 }}>
+            {responsibility.active ? 'Desactivar' : 'Reactivar'}
+          </Btn>
+        </div>
+      )}
     </div>
   );
 }
@@ -1207,7 +1327,7 @@ function DesempenoView(props) {
   );
 }
 
-function EquipoView({ user, teams, equipos, users, vacaciones, onSaveProfile, onUploadAvatar, onViewDpuPdf, onReviewVacation }) {
+function EquipoView({ user, teams, equipos, users, positions, vacaciones, onSaveProfile, onUploadAvatar, onViewDpuPdf, onReviewVacation }) {
   const team = teams.find(t => t.id === user.teamId);
   const misCompaneros = users.filter(u => u.teamId === user.teamId && u.id !== user.id);
   const misEquipos = equipos.filter(e => e.teamId === user.teamId);
@@ -1238,7 +1358,7 @@ function EquipoView({ user, teams, equipos, users, vacaciones, onSaveProfile, on
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           {misCompaneros.map(u => (
             <LiderPersonaRow
-              key={u.id} persona={u} equipos={misEquipos} onSaveProfile={onSaveProfile}
+              key={u.id} persona={u} equipos={misEquipos} positions={positions} onSaveProfile={onSaveProfile}
               onUploadAvatar={onUploadAvatar} onViewDpuPdf={onViewDpuPdf}
               vacaciones={vacaciones.filter(v => v.personaId === u.id)} onReviewVacation={onReviewVacation}
             />
@@ -1250,14 +1370,15 @@ function EquipoView({ user, teams, equipos, users, vacaciones, onSaveProfile, on
   );
 }
 
-function LiderPersonaRow({ persona, equipos, onSaveProfile, onUploadAvatar, onViewDpuPdf, vacaciones, onReviewVacation }) {
+function LiderPersonaRow({ persona, equipos, positions, onSaveProfile, onUploadAvatar, onViewDpuPdf, vacaciones, onReviewVacation }) {
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ puesto: persona.puesto, jefe: persona.jefe, equipoId: persona.equipoId || '', funciones: (persona.funciones || []).join('\n') });
+  const [form, setForm] = useState({ positionId: persona.positionId || '', jefe: persona.jefe, equipoId: persona.equipoId || '', funciones: (persona.funciones || []).join('\n') });
+  const availablePositions = positions.filter(p => p.active || p.id === form.positionId);
 
   function save() {
     onSaveProfile(persona.id, {
       name: persona.name, role: persona.role, teamId: persona.teamId,
-      puesto: form.puesto, jefe: form.jefe, equipoId: form.equipoId || null,
+      positionId: form.positionId || null, jefe: form.jefe, equipoId: form.equipoId || null,
       funciones: form.funciones.split('\n').map(s => s.trim()).filter(Boolean),
     });
   }
@@ -1276,7 +1397,10 @@ function LiderPersonaRow({ persona, equipos, onSaveProfile, onUploadAvatar, onVi
         <div style={{ marginTop: 10, marginLeft: 20, display: 'flex', flexDirection: 'column', gap: 10 }}>
           <AvatarUploader persona={persona} onUploadAvatar={onUploadAvatar} />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
-            <Input placeholder="Puesto" value={form.puesto} onChange={e => setForm({ ...form, puesto: e.target.value })} />
+            <Select value={form.positionId} onChange={e => setForm({ ...form, positionId: e.target.value })}>
+              <option value="">Sin puesto asignado</option>
+              {availablePositions.map(p => <option key={p.id} value={p.id}>{p.name}{!p.active ? ' (inactivo)' : ''}</option>)}
+            </Select>
             <Input placeholder="Jefe directo" value={form.jefe} onChange={e => setForm({ ...form, jefe: e.target.value })} />
             <Select value={form.equipoId} onChange={e => setForm({ ...form, equipoId: e.target.value })}>
               <option value="">Sin equipo específico</option>
@@ -1331,6 +1455,8 @@ export default function App() {
   const [okrsEquipo, setOkrsEquipo] = useState([]);
   const [activities, setActivities] = useState([]);
   const [vacaciones, setVacaciones] = useState([]);
+  const [positions, setPositions] = useState([]);
+  const [responsibilities, setResponsibilities] = useState([]);
   const [empresaName, setEmpresaName] = useState(DEFAULT_COMPANY_NAME);
   const [view, setView] = useState('inicio');
   const [loadError, setLoadError] = useState('');
@@ -1350,13 +1476,18 @@ export default function App() {
     const mappedUsers = (profileRows || []).map(mapProfile);
     const usersById = Object.fromEntries(mappedUsers.map(u => [u.id, u]));
 
-    const [{ data: kpiRows, error: e3 }, { data: okrRows, error: e4 }, { data: actRows, error: e5 }, { data: vacRows, error: e6 }] = await Promise.all([
+    const [
+      { data: kpiRows, error: e3 }, { data: okrRows, error: e4 }, { data: actRows, error: e5 }, { data: vacRows, error: e6 },
+      { data: posRows, error: e7 }, { data: respRows, error: e8 },
+    ] = await Promise.all([
       supabase.from('kpis').select('*, kpi_historial(fecha, valor)'),
       supabase.from('okrs_equipo').select('*, okr_krs(*)'),
       supabase.from('activities').select('*, activity_comentarios(*)').order('created_at', { ascending: false }),
       supabase.from('vacaciones').select('*').order('created_at', { ascending: false }),
+      supabase.from('positions').select('*').order('name'),
+      supabase.from('responsibilities').select('*').order('order_index'),
     ]);
-    if (e3 || e4 || e5 || e6) { setLoadError((e3 || e4 || e5 || e6).message); return; }
+    if (e3 || e4 || e5 || e6 || e7 || e8) { setLoadError((e3 || e4 || e5 || e6 || e7 || e8).message); return; }
 
     setTeams(mappedTeams);
     setEquipos(mappedEquipos);
@@ -1365,6 +1496,8 @@ export default function App() {
     setOkrsEquipo((okrRows || []).map(mapOkr));
     setActivities((actRows || []).map(a => mapActivity(a, usersById)));
     setVacaciones((vacRows || []).map(mapVacacion));
+    setPositions((posRows || []).map(mapPosition));
+    setResponsibilities((respRows || []).map(mapResponsibility));
     if (empresaRows && empresaRows[0]) setEmpresaName(empresaRows[0].name);
 
     const me = usersById[sess.user.id];
@@ -1451,10 +1584,11 @@ export default function App() {
   }
   async function saveProfile(id, fields) {
     await supabase.from('profiles').update({
-      name: fields.name, puesto: fields.puesto, jefe: fields.jefe, role: fields.role,
+      name: fields.name, jefe: fields.jefe, role: fields.role,
       team_id: fields.teamId, equipo_id: fields.equipoId, funciones: fields.funciones,
       ...(fields.fechaIngreso !== undefined ? { fecha_ingreso: fields.fechaIngreso } : {}),
       ...(fields.diasVacacionesDisponibles !== undefined ? { dias_vacaciones_disponibles: fields.diasVacacionesDisponibles } : {}),
+      ...(fields.positionId !== undefined ? { position_id: fields.positionId } : {}),
     }).eq('id', id);
     fetchAll(session);
   }
@@ -1496,6 +1630,39 @@ export default function App() {
   }
   async function reviewVacation(id, estado) {
     await supabase.from('vacaciones').update({ estado, revisado_por: currentUser.id, revisado_at: new Date().toISOString() }).eq('id', id);
+    fetchAll(session);
+  }
+  async function addPosition(name) {
+    await supabase.from('positions').insert({ name });
+    fetchAll(session);
+  }
+  async function togglePositionActive(id, nextActive) {
+    await supabase.from('positions').update({ active: nextActive }).eq('id', id);
+    fetchAll(session);
+  }
+  async function addResponsibility(positionId, name) {
+    const maxOrder = responsibilities.filter(r => r.positionId === positionId).reduce((m, r) => Math.max(m, r.orderIndex), -1);
+    await supabase.from('responsibilities').insert({ position_id: positionId, name, order_index: maxOrder + 1 });
+    fetchAll(session);
+  }
+  async function saveResponsibility(id, fields) {
+    await supabase.from('responsibilities').update({ name: fields.name, description: fields.description }).eq('id', id);
+    fetchAll(session);
+  }
+  async function toggleResponsibilityActive(id, nextActive) {
+    await supabase.from('responsibilities').update({ active: nextActive }).eq('id', id);
+    fetchAll(session);
+  }
+  async function moveResponsibility(positionId, id, direction) {
+    const list = responsibilities.filter(r => r.positionId === positionId).slice().sort((a, b) => a.orderIndex - b.orderIndex);
+    const idx = list.findIndex(r => r.id === id);
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (idx < 0 || swapIdx < 0 || swapIdx >= list.length) return;
+    const a = list[idx], b = list[swapIdx];
+    await Promise.all([
+      supabase.from('responsibilities').update({ order_index: b.orderIndex }).eq('id', a.id),
+      supabase.from('responsibilities').update({ order_index: a.orderIndex }).eq('id', b.id),
+    ]);
     fetchAll(session);
   }
 
@@ -1609,7 +1776,7 @@ export default function App() {
         {view === 'perfil' && (
           <DPUView
             user={currentUser} teams={teams} equipos={equipos} kpis={kpis} okrsEquipo={okrsEquipo}
-            vacaciones={vacaciones}
+            responsibilities={responsibilities} vacaciones={vacaciones}
             onUploadAvatar={uploadAvatar} onViewDpuPdf={viewDpuPdf}
             onRequestVacation={requestVacation} onCancelVacation={cancelVacation}
           />
@@ -1629,16 +1796,20 @@ export default function App() {
         {view === 'objetivos' && <OKRsView user={currentUser} teams={teams} okrsEquipo={okrsEquipo} onUpdateKrActual={updateKrActual} onAddOkr={addOkr} />}
         {view === 'equipo' && isLider && (
           <EquipoView
-            user={currentUser} teams={teams} equipos={equipos} users={users} vacaciones={vacaciones} onSaveProfile={saveProfile}
+            user={currentUser} teams={teams} equipos={equipos} users={users} positions={positions} vacaciones={vacaciones} onSaveProfile={saveProfile}
             onUploadAvatar={uploadAvatar} onViewDpuPdf={viewDpuPdf} onReviewVacation={reviewVacation}
           />
         )}
         {view === 'admin' && isAdmin && (
           <AdminView
             empresaName={empresaName} teams={teams} equipos={equipos} users={users} vacaciones={vacaciones}
+            positions={positions} responsibilities={responsibilities}
             onSaveEmpresa={saveEmpresa} onAddTeam={addTeam} onRemoveTeam={removeTeam}
             onAddEquipo={addEquipo} onRemoveEquipo={removeEquipo} onSaveProfile={saveProfile} onTogglePermiso={togglePermiso}
             onUploadAvatar={uploadAvatar} onUploadDpuPdf={uploadDpuPdf} onViewDpuPdf={viewDpuPdf} onReviewVacation={reviewVacation}
+            onAddPosition={addPosition} onTogglePositionActive={togglePositionActive}
+            onAddResponsibility={addResponsibility} onSaveResponsibility={saveResponsibility}
+            onToggleResponsibilityActive={toggleResponsibilityActive} onMoveResponsibility={moveResponsibility}
           />
         )}
       </div>
