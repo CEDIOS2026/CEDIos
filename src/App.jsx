@@ -25,7 +25,7 @@ const PERMISOS_LABEL = {
   verBSC: 'Ver Balanced Scorecard',
 };
 const DEFAULT_COMPANY_NAME = 'Cedi';
-const APP_VERSION = 'v6';
+const APP_VERSION = 'v7';
 
 // ---------------------------------------------------------------------------
 // HELPERS
@@ -1178,37 +1178,31 @@ function AdminView({ empresaName, teams, equipos, users, vacaciones, onSaveEmpre
 // DESEMPEÑO — contenedor con pestañas internas: Mi DPU / KPI / Balanced Scorecard
 // ---------------------------------------------------------------------------
 function DesempenoView(props) {
-  const { user, canSeeBSC, isAdmin } = props;
-  const [tab, setTab] = useState('dpu');
+  const { canSeeBSC, isAdmin } = props;
+  const showBsc = isAdmin || canSeeBSC;
+  const [tab, setTab] = useState('kpis');
   const tabs = [
-    { id: 'dpu', label: 'Mi DPU' },
     { id: 'kpis', label: 'KPI' },
-    ...((isAdmin || canSeeBSC) ? [{ id: 'bsc', label: 'Balanced Scorecard' }] : []),
+    ...(showBsc ? [{ id: 'bsc', label: 'Balanced Scorecard' }] : []),
   ];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div className="no-print" style={{ display: 'flex', gap: 6, borderBottom: '1px solid var(--border)', paddingBottom: 2 }}>
-        {tabs.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{
-            background: 'none', border: 'none', cursor: 'pointer', padding: '8px 4px', marginRight: 14,
-            fontSize: 14, fontWeight: tab === t.id ? 700 : 500, color: tab === t.id ? 'var(--text)' : 'var(--text-dim)',
-            borderBottom: tab === t.id ? '2px solid var(--blue)' : '2px solid transparent',
-          }}>
-            {t.label}
-          </button>
-        ))}
-      </div>
-      {tab === 'dpu' && (
-        <DPUView
-          user={props.user} teams={props.teams} equipos={props.equipos} kpis={props.kpis} okrsEquipo={props.okrsEquipo}
-          vacaciones={props.vacaciones}
-          onUploadAvatar={props.onUploadAvatar} onViewDpuPdf={props.onViewDpuPdf}
-          onRequestVacation={props.onRequestVacation} onCancelVacation={props.onCancelVacation}
-        />
+      {tabs.length > 1 && (
+        <div className="no-print" style={{ display: 'flex', gap: 6, borderBottom: '1px solid var(--border)', paddingBottom: 2 }}>
+          {tabs.map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)} style={{
+              background: 'none', border: 'none', cursor: 'pointer', padding: '8px 4px', marginRight: 14,
+              fontSize: 14, fontWeight: tab === t.id ? 700 : 500, color: tab === t.id ? 'var(--text)' : 'var(--text-dim)',
+              borderBottom: tab === t.id ? '2px solid var(--blue)' : '2px solid transparent',
+            }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
       )}
       {tab === 'kpis' && <KPIsView user={props.user} teams={props.teams} kpis={props.kpis} onUpdateActual={props.onUpdateActual} />}
-      {tab === 'bsc' && (isAdmin || canSeeBSC) && <BSCView kpis={props.kpis} teams={props.teams} />}
+      {tab === 'bsc' && showBsc && <BSCView kpis={props.kpis} teams={props.teams} />}
     </div>
   );
 }
@@ -1580,13 +1574,18 @@ export default function App() {
           })}
         </div>
         <div style={{ padding: 14, borderTop: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+          <button onClick={() => setView('perfil')} style={{
+            all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, width: '100%',
+            padding: 8, marginLeft: -8, marginTop: -8, borderRadius: 10,
+            background: view === 'perfil' ? '#fff' : 'transparent',
+            boxShadow: view === 'perfil' ? '0 1px 2px rgba(16,24,32,0.06)' : 'none',
+          }}>
             <Avatar url={currentUser.avatarUrl} name={currentUser.name} size={32} />
             <div>
               <div style={{ fontSize: 13, fontWeight: 600 }}>{currentUser.name} — {currentUser.puesto}</div>
               <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>{ROLE_LABEL[currentUser.role]}{team ? ` · ${team.name}` : ''}</div>
             </div>
-          </div>
+          </button>
           <button onClick={logout} style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#fff', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-dim)', padding: '8px 10px', cursor: 'pointer', fontSize: 13, width: '100%' }}>
             <LogOut size={13} /> Cerrar sesión
           </button>
@@ -1596,7 +1595,7 @@ export default function App() {
 
       <div style={{ flex: 1, padding: 28, overflow: 'auto' }}>
         <div style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: '-0.02em' }}>{NAV.find(n => n.id === view)?.label}</div>
+          <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: '-0.02em' }}>{view === 'perfil' ? 'Mi Perfil' : NAV.find(n => n.id === view)?.label}</div>
         </div>
 
         {loadError && <div style={{ color: 'var(--red)', fontSize: 13, marginBottom: 12 }}>{loadError}</div>}
@@ -1607,6 +1606,14 @@ export default function App() {
             vacaciones={vacaciones} users={users} onGo={setView}
           />
         )}
+        {view === 'perfil' && (
+          <DPUView
+            user={currentUser} teams={teams} equipos={equipos} kpis={kpis} okrsEquipo={okrsEquipo}
+            vacaciones={vacaciones}
+            onUploadAvatar={uploadAvatar} onViewDpuPdf={viewDpuPdf}
+            onRequestVacation={requestVacation} onCancelVacation={cancelVacation}
+          />
+        )}
         {view === 'trabajo' && (
           <ActividadesView
             user={currentUser} teams={teams} users={users} activities={activities}
@@ -1615,10 +1622,8 @@ export default function App() {
         )}
         {view === 'desempeno' && (
           <DesempenoView
-            user={currentUser} teams={teams} equipos={equipos} kpis={kpis} okrsEquipo={okrsEquipo}
+            user={currentUser} teams={teams} kpis={kpis}
             onUpdateActual={updateActual} isAdmin={isAdmin} canSeeBSC={canSeeBSC}
-            onUploadAvatar={uploadAvatar} onViewDpuPdf={viewDpuPdf}
-            vacaciones={vacaciones} onRequestVacation={requestVacation} onCancelVacation={cancelVacation}
           />
         )}
         {view === 'objetivos' && <OKRsView user={currentUser} teams={teams} okrsEquipo={okrsEquipo} onUpdateKrActual={updateKrActual} onAddOkr={addOkr} />}
