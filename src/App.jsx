@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Target, BarChart3, ClipboardList, Settings, LogOut,
-  ShieldCheck, Lock, ChevronRight, ChevronDown, Plus, Trash2, User as UserIcon,
+  Target, BarChart3, ClipboardList, Settings, LogOut, Home,
+  ShieldCheck, Lock, ChevronRight, ChevronDown, Plus, Trash2, User as UserIcon, Users2,
   Landmark, Boxes, AlertTriangle, MessageSquare, Download, Printer
 } from 'lucide-react';
 import { supabase } from './supabaseClient.js';
@@ -16,7 +16,7 @@ const PERSPECTIVA_LABEL = {
   Procesos: 'Procesos Internos',
   Aprendizaje: 'Aprendizaje y Crecimiento',
 };
-const ROLE_LABEL = { admin: 'Administrador', usuario: 'Usuario' };
+const ROLE_LABEL = { admin: 'Administrador', lider: 'Líder', colaborador: 'Colaborador' };
 const PERMISOS_DEFAULT = { editarKPIs: false, editarOKRs: false, gestionarActividades: false, verBSC: false };
 const PERMISOS_LABEL = {
   editarKPIs: 'Editar KPI de su área',
@@ -24,13 +24,14 @@ const PERMISOS_LABEL = {
   gestionarActividades: 'Gestionar actividades de su área',
   verBSC: 'Ver Balanced Scorecard',
 };
-const COMPANY_NAME = 'Cedi';
+const DEFAULT_COMPANY_NAME = 'Cedi';
+const APP_VERSION = 'v3';
 
 // ---------------------------------------------------------------------------
 // HELPERS
 // ---------------------------------------------------------------------------
 function hasPerm(user, key) {
-  return user.role === 'admin' || !!(user.permisos && user.permisos[key]);
+  return user.role === 'admin' || user.role === 'lider' || !!(user.permisos && user.permisos[key]);
 }
 
 function kpiStatus(k) {
@@ -65,9 +66,10 @@ function downloadCSV(filename, rows) {
 // MAPEO supabase (snake_case) -> objetos que usa la interfaz (camelCase)
 // ---------------------------------------------------------------------------
 function mapTeam(t) { return { id: t.id, bay: t.bay, name: t.name }; }
+function mapEquipo(e) { return { id: e.id, teamId: e.team_id, name: e.name }; }
 function mapProfile(p) {
   return {
-    id: p.id, username: p.username, name: p.name, role: p.role, teamId: p.team_id,
+    id: p.id, username: p.username, name: p.name, role: p.role, teamId: p.team_id, equipoId: p.equipo_id,
     puesto: p.puesto, jefe: p.jefe, funciones: p.funciones || [],
     permisos: { ...PERMISOS_DEFAULT, ...(p.permisos || {}) },
   };
@@ -186,7 +188,7 @@ function EditableNumber({ value, onCommit, style }) {
 // ---------------------------------------------------------------------------
 // LOGIN
 // ---------------------------------------------------------------------------
-function LoginScreen({ onLogin }) {
+function LoginScreen({ onLogin, companyName }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -206,13 +208,13 @@ function LoginScreen({ onLogin }) {
   return (
     <div style={{ minHeight: '100%', position: 'relative', background: 'radial-gradient(circle at 70% 15%, #ffffff 0%, #eceef1 55%, #e2e4e8 100%)', padding: 32 }}>
       <div style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 800, fontSize: 24, color: 'var(--text)', letterSpacing: '-0.02em' }}>
-        {COMPANY_NAME.toLowerCase()}<span style={{ color: 'var(--blue)' }}>.</span>
+        {companyName.toLowerCase()}<span style={{ color: 'var(--blue)' }}>.</span>
       </div>
       <div style={{ minHeight: 460, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ width: '100%', maxWidth: 380 }}>
           <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 22, padding: 32, boxShadow: '0 8px 30px rgba(20,24,30,0.08)' }}>
             <div style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700, fontSize: 26, color: 'var(--text)', marginBottom: 6 }}>Bienvenid@ de vuelta</div>
-            <div style={{ fontSize: 14, color: 'var(--text-dim)', marginBottom: 22, lineHeight: 1.5 }}>Ingresa tus credenciales para acceder al {COMPANY_NAME} OS</div>
+            <div style={{ fontSize: 14, color: 'var(--text-dim)', marginBottom: 22, lineHeight: 1.5 }}>Ingresa tus credenciales para acceder al {companyName} OS</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 5 }}>Correo electrónico</div>
@@ -240,8 +242,97 @@ function LoginScreen({ onLogin }) {
 // ---------------------------------------------------------------------------
 // DPU VIEW
 // ---------------------------------------------------------------------------
-function DPUView({ user, teams, kpis, okrsEquipo }) {
+// ---------------------------------------------------------------------------
+// INICIO (Home) — el punto de partida del día, no un dashboard más
+// ---------------------------------------------------------------------------
+function HomeView({ user, teams, equipos, kpis, okrsEquipo, activities, onGo }) {
+  const hour = new Date().getHours();
+  const saludo = hour < 12 ? 'Buenos días' : hour < 19 ? 'Buenas tardes' : 'Buenas noches';
+  const primerNombre = (user.name || '').split(' ')[0];
+  const hoyStr = new Date().toISOString().slice(0, 10);
+
+  const misActividades = activities.filter(a => a.asignadoAId === user.id && a.estado !== 'completada');
+  const vencenHoy = misActividades.filter(a => a.fecha === hoyStr);
+
+  const myKpis = kpis.filter(k => (user.teamId ? k.teamId === user.teamId : k.teamId === null));
+  const onCount = myKpis.filter(k => kpiStatus(k) === 'on').length;
+  const atRisk = myKpis.filter(k => kpiStatus(k) !== 'on');
+
+  const myOkrs = user.teamId ? okrsEquipo.filter(o => o.teamId === user.teamId) : okrsEquipo;
+  const allKrs = myOkrs.flatMap(o => o.krs);
+  const avgProgress = allKrs.length ? Math.round(allKrs.reduce((s, kr) => s + krProgress(kr), 0) / allKrs.length) : null;
+
   const team = teams.find(t => t.id === user.teamId);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div>
+        <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: '-0.02em' }}>{saludo}, {primerNombre}</div>
+        <div style={{ fontSize: 14, color: 'var(--text-dim)', marginTop: 2 }}>{user.puesto}{team ? ` · ${team.name}` : ''}</div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16 }}>
+        <Panel>
+          <Eyebrow>Hoy</Eyebrow>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <button onClick={() => onGo('trabajo')} style={{ all: 'unset', cursor: 'pointer', fontSize: 15 }}>
+              <strong>{misActividades.length}</strong> actividad{misActividades.length === 1 ? '' : 'es'} pendiente{misActividades.length === 1 ? '' : 's'}
+            </button>
+            {vencenHoy.length > 0 && (
+              <div style={{ fontSize: 13, color: 'var(--red)' }}>{vencenHoy.length} vence{vencenHoy.length === 1 ? '' : 'n'} hoy</div>
+            )}
+            {misActividades.length === 0 && <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>Sin pendientes por ahora.</div>}
+          </div>
+        </Panel>
+
+        <Panel>
+          <Eyebrow>Tu desempeño</Eyebrow>
+          <button onClick={() => onGo('desempeno')} style={{ all: 'unset', cursor: 'pointer', display: 'block', width: '100%' }}>
+            <div style={{ fontSize: 15 }}><strong>{onCount}</strong> de <strong>{myKpis.length}</strong> KPI en meta</div>
+            {atRisk.length > 0 && <div style={{ fontSize: 13, color: 'var(--amber)', marginTop: 4 }}>{atRisk.length} requiere{atRisk.length === 1 ? '' : 'n'} atención</div>}
+          </button>
+        </Panel>
+
+        <Panel>
+          <Eyebrow>Tus objetivos</Eyebrow>
+          <button onClick={() => onGo('objetivos')} style={{ all: 'unset', cursor: 'pointer', display: 'block', width: '100%' }}>
+            {avgProgress !== null ? (
+              <>
+                <div style={{ fontSize: 15, marginBottom: 6 }}>OKR del periodo: <strong>{avgProgress}%</strong></div>
+                <ProgressBar pct={avgProgress} color={avgProgress >= 80 ? 'var(--green)' : avgProgress >= 50 ? 'var(--amber)' : 'var(--red)'} />
+                <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 6 }}>
+                  {avgProgress >= 80 ? 'En trayectoria' : avgProgress >= 50 ? 'Requiere seguimiento' : 'Atrás de lo esperado'}
+                </div>
+              </>
+            ) : <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>Sin OKR definidos todavía.</div>}
+          </button>
+        </Panel>
+      </div>
+
+      {atRisk.length > 0 && (
+        <Panel>
+          <Eyebrow>Atención</Eyebrow>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {atRisk.map(k => {
+              const s = kpiStatus(k);
+              return (
+                <div key={k.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14 }}>
+                  <AlertTriangle size={15} color={STATUS_COLOR[s]} />
+                  <span style={{ flex: 1 }}>{k.name}</span>
+                  <span style={{ fontWeight: 600, color: STATUS_COLOR[s] }}>{k.actual}{k.unidad} vs meta {k.meta}{k.unidad}</span>
+                </div>
+              );
+            })}
+          </div>
+        </Panel>
+      )}
+    </div>
+  );
+}
+
+function DPUView({ user, teams, equipos, kpis, okrsEquipo }) {
+  const team = teams.find(t => t.id === user.teamId);
+  const equipo = equipos.find(e => e.id === user.equipoId);
   const myKpis = kpis.filter(k => (user.teamId ? k.teamId === user.teamId : k.teamId === null));
   const myOkrs = user.teamId ? okrsEquipo.filter(o => o.teamId === user.teamId) : okrsEquipo;
 
@@ -253,7 +344,8 @@ function DPUView({ user, teams, kpis, okrsEquipo }) {
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, marginBottom: 14 }}>
           <div><div style={{ fontSize: 12, color: 'var(--text-dim)' }}>Nombre</div><div style={{ fontSize: 18, fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 600 }}>{user.name}</div></div>
           <div><div style={{ fontSize: 12, color: 'var(--text-dim)' }}>Puesto</div><div style={{ fontSize: 18, fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 600 }}>{user.puesto}</div></div>
-          <div><div style={{ fontSize: 12, color: 'var(--text-dim)' }}>Unidad / Área</div><div style={{ fontSize: 18, fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 600 }}>{team ? `${team.bay} · ${team.name}` : 'Dirección General'}</div></div>
+          <div><div style={{ fontSize: 12, color: 'var(--text-dim)' }}>Área</div><div style={{ fontSize: 18, fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 600 }}>{team ? `${team.bay} · ${team.name}` : 'Dirección General'}</div></div>
+          {equipo && <div><div style={{ fontSize: 12, color: 'var(--text-dim)' }}>Equipo</div><div style={{ fontSize: 18, fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 600 }}>{equipo.name}</div></div>}
           <div><div style={{ fontSize: 12, color: 'var(--text-dim)' }}>Jefe directo</div><div style={{ fontSize: 18, fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 600 }}>{user.jefe}</div></div>
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 6 }}>Funciones clave</div>
@@ -651,15 +743,19 @@ function BSCView({ kpis, teams }) {
 // ---------------------------------------------------------------------------
 // ADMIN VIEW
 // ---------------------------------------------------------------------------
-function UserRow({ user, team, teams, onSaveProfile, onTogglePermiso }) {
+function UserRow({ user, team, teams, equipos, onSaveProfile, onTogglePermiso }) {
   const [open, setOpen] = useState(false);
   const isAdmin = user.role === 'admin';
-  const [form, setForm] = useState({ name: user.name, puesto: user.puesto, jefe: user.jefe, role: user.role, teamId: user.teamId || '', funciones: (user.funciones || []).join('\n') });
+  const isLider = user.role === 'lider';
+  const [form, setForm] = useState({ name: user.name, puesto: user.puesto, jefe: user.jefe, role: user.role, teamId: user.teamId || '', equipoId: user.equipoId || '', funciones: (user.funciones || []).join('\n') });
+
+  const equiposDeArea = equipos.filter(e => e.teamId === form.teamId);
 
   function save() {
     onSaveProfile(user.id, {
       name: form.name, puesto: form.puesto, jefe: form.jefe, role: form.role,
-      teamId: form.teamId || null, funciones: form.funciones.split('\n').map(s => s.trim()).filter(Boolean),
+      teamId: form.teamId || null, equipoId: form.equipoId || null,
+      funciones: form.funciones.split('\n').map(s => s.trim()).filter(Boolean),
     });
   }
 
@@ -667,9 +763,8 @@ function UserRow({ user, team, teams, onSaveProfile, onTogglePermiso }) {
     <div style={{ borderBottom: '1px solid var(--border)', padding: '8px 0' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13 }}>
         <ShieldCheck size={14} color="var(--text-dim)" />
-        <span style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", width: 130 }}>{user.username}</span>
         <span style={{ flex: 1 }}>{user.name} — {user.puesto}</span>
-        <span style={{ color: 'var(--text-dim)', width: 100 }}>{ROLE_LABEL[user.role]}</span>
+        <span style={{ color: 'var(--text-dim)', width: 110 }}>{ROLE_LABEL[user.role]}</span>
         <span style={{ color: 'var(--text-dim)', width: 90 }}>{team ? team.name : '—'}</span>
         <button onClick={() => setOpen(o => !o)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 3, fontSize: 12 }}>
           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />} Editar
@@ -677,15 +772,21 @@ function UserRow({ user, team, teams, onSaveProfile, onTogglePermiso }) {
       </div>
       {open && (
         <div style={{ marginTop: 10, marginLeft: 24, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>Usuario: {user.username}</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
             <Input placeholder="Nombre completo" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
             <Select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}>
-              <option value="usuario">Usuario</option>
+              <option value="colaborador">Colaborador</option>
+              <option value="lider">Líder</option>
               <option value="admin">Administrador</option>
             </Select>
-            <Select value={form.teamId} onChange={e => setForm({ ...form, teamId: e.target.value })}>
+            <Select value={form.teamId} onChange={e => setForm({ ...form, teamId: e.target.value, equipoId: '' })}>
               <option value="">Sin área / Dirección</option>
               {teams.map(t => <option key={t.id} value={t.id}>{t.bay} · {t.name}</option>)}
+            </Select>
+            <Select value={form.equipoId} onChange={e => setForm({ ...form, equipoId: e.target.value })} disabled={!form.teamId}>
+              <option value="">Sin equipo específico</option>
+              {equiposDeArea.map(eq => <option key={eq.id} value={eq.id}>{eq.name}</option>)}
             </Select>
             <Input placeholder="Puesto" value={form.puesto} onChange={e => setForm({ ...form, puesto: e.target.value })} />
             <Input placeholder="Jefe directo" value={form.jefe} onChange={e => setForm({ ...form, jefe: e.target.value })} />
@@ -697,7 +798,13 @@ function UserRow({ user, team, teams, onSaveProfile, onTogglePermiso }) {
           />
           <Btn onClick={save} style={{ alignSelf: 'flex-start' }}>Guardar cambios</Btn>
 
-          {!isAdmin && (
+          {isLider && (
+            <div style={{ fontSize: 12, color: 'var(--text-dim)', background: 'var(--panel-alt)', borderRadius: 10, padding: '8px 10px' }}>
+              Como Líder, esta persona ya tiene automáticamente todos los permisos de gestión sobre su área
+              (editar KPI, editar OKR, gestionar actividades, ver Balanced Scorecard) — no hace falta activarlos.
+            </div>
+          )}
+          {!isAdmin && !isLider && (
             <div style={{ marginTop: 4 }}>
               <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 6 }}>Permisos adicionales</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14 }}>
@@ -716,11 +823,22 @@ function UserRow({ user, team, teams, onSaveProfile, onTogglePermiso }) {
   );
 }
 
-function AdminView({ teams, users, onAddTeam, onRemoveTeam, onSaveProfile, onTogglePermiso }) {
+function AdminView({ empresaName, teams, equipos, users, onSaveEmpresa, onAddTeam, onRemoveTeam, onAddEquipo, onRemoveEquipo, onSaveProfile, onTogglePermiso }) {
   const [newTeamName, setNewTeamName] = useState('');
+  const [newEquipoTeamId, setNewEquipoTeamId] = useState('');
+  const [newEquipoName, setNewEquipoName] = useState('');
+  const [companyDraft, setCompanyDraft] = useState(empresaName);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <Panel>
+        <Eyebrow>Empresa</Eyebrow>
+        <div style={{ display: 'flex', gap: 8, maxWidth: 420 }}>
+          <Input value={companyDraft} onChange={e => setCompanyDraft(e.target.value)} />
+          <Btn onClick={() => onSaveEmpresa(companyDraft.trim() || empresaName)}>Guardar</Btn>
+        </div>
+      </Panel>
+
       <Panel>
         <Eyebrow>Áreas</Eyebrow>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
@@ -734,7 +852,36 @@ function AdminView({ teams, users, onAddTeam, onRemoveTeam, onSaveProfile, onTog
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <Input placeholder="Nombre de la nueva área" value={newTeamName} onChange={e => setNewTeamName(e.target.value)} />
-          <Btn onClick={() => { if (newTeamName.trim()) { onAddTeam(newTeamName.trim()); setNewTeamName(''); } }}><Plus size={15} /></Btn>
+          <Btn onClick={() => { if (newTeamName.trim()) { onAddTeam(newTeamName.trim()); setNewTeamName(''); } }}><Plus size={15} /> Agregar área</Btn>
+        </div>
+      </Panel>
+
+      <Panel>
+        <Eyebrow>Equipos (subdivisiones dentro de un área)</Eyebrow>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+          {equipos.map(eq => {
+            const team = teams.find(t => t.id === eq.teamId);
+            return (
+              <div key={eq.id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, padding: '4px 0' }}>
+                <span style={{ color: 'var(--text-dim)', width: 100 }}>{team ? team.name : '—'}</span>
+                <span style={{ flex: 1 }}>{eq.name}</span>
+                <button onClick={() => onRemoveEquipo(eq.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)' }}><Trash2 size={14} /></button>
+              </div>
+            );
+          })}
+          {equipos.length === 0 && <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>Todavía no hay equipos definidos dentro de las áreas.</div>}
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 160px' }}>
+            <Select value={newEquipoTeamId} onChange={e => setNewEquipoTeamId(e.target.value)}>
+              <option value="">Área…</option>
+              {teams.map(t => <option key={t.id} value={t.id}>{t.bay} · {t.name}</option>)}
+            </Select>
+          </div>
+          <div style={{ flex: '2 1 200px' }}>
+            <Input placeholder="Nombre del nuevo equipo" value={newEquipoName} onChange={e => setNewEquipoName(e.target.value)} />
+          </div>
+          <Btn onClick={() => { if (newEquipoName.trim() && newEquipoTeamId) { onAddEquipo(newEquipoTeamId, newEquipoName.trim()); setNewEquipoName(''); } }}><Plus size={15} /> Agregar equipo</Btn>
         </div>
       </Panel>
 
@@ -742,15 +889,111 @@ function AdminView({ teams, users, onAddTeam, onRemoveTeam, onSaveProfile, onTog
         <Eyebrow>Usuarios y permisos</Eyebrow>
         <div style={{ display: 'flex', flexDirection: 'column', marginBottom: 12 }}>
           {users.map(u => (
-            <UserRow key={u.id} user={u} team={teams.find(t => t.id === u.teamId)} teams={teams} onSaveProfile={onSaveProfile} onTogglePermiso={onTogglePermiso} />
+            <UserRow key={u.id} user={u} team={teams.find(t => t.id === u.teamId)} teams={teams} equipos={equipos} onSaveProfile={onSaveProfile} onTogglePermiso={onTogglePermiso} />
           ))}
         </div>
         <div style={{ fontSize: 13, color: 'var(--text-dim)', background: 'var(--panel-alt)', borderRadius: 12, padding: 14, lineHeight: 1.6 }}>
           Para dar de alta a una persona nueva: ve a tu proyecto de Supabase → <strong>Authentication → Users → Add user</strong>,
           captura su correo y una contraseña temporal. En cuanto se cree, aparecerá aquí automáticamente — solo falta que le asignes
-          área, puesto y permisos. Para quitarle el acceso a alguien, bórralo desde esa misma pantalla de Supabase.
+          área, equipo, puesto, rol y permisos. Para quitarle el acceso a alguien, bórralo desde esa misma pantalla de Supabase.
         </div>
       </Panel>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// DESEMPEÑO — contenedor con pestañas internas: Mi DPU / KPI / Balanced Scorecard
+// ---------------------------------------------------------------------------
+function DesempenoView(props) {
+  const { user, canSeeBSC, isAdmin } = props;
+  const [tab, setTab] = useState('dpu');
+  const tabs = [
+    { id: 'dpu', label: 'Mi DPU' },
+    { id: 'kpis', label: 'KPI' },
+    ...((isAdmin || canSeeBSC) ? [{ id: 'bsc', label: 'Balanced Scorecard' }] : []),
+  ];
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div className="no-print" style={{ display: 'flex', gap: 6, borderBottom: '1px solid var(--border)', paddingBottom: 2 }}>
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)} style={{
+            background: 'none', border: 'none', cursor: 'pointer', padding: '8px 4px', marginRight: 14,
+            fontSize: 14, fontWeight: tab === t.id ? 700 : 500, color: tab === t.id ? 'var(--text)' : 'var(--text-dim)',
+            borderBottom: tab === t.id ? '2px solid var(--blue)' : '2px solid transparent',
+          }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {tab === 'dpu' && <DPUView user={props.user} teams={props.teams} equipos={props.equipos} kpis={props.kpis} okrsEquipo={props.okrsEquipo} />}
+      {tab === 'kpis' && <KPIsView user={props.user} teams={props.teams} kpis={props.kpis} onUpdateActual={props.onUpdateActual} />}
+      {tab === 'bsc' && (isAdmin || canSeeBSC) && <BSCView kpis={props.kpis} teams={props.teams} />}
+    </div>
+  );
+}
+
+function EquipoView({ user, teams, equipos, users, onSaveProfile }) {
+  const team = teams.find(t => t.id === user.teamId);
+  const misCompaneros = users.filter(u => u.teamId === user.teamId && u.id !== user.id);
+  const misEquipos = equipos.filter(e => e.teamId === user.teamId);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <Panel>
+        <Eyebrow>{team ? `Personas en ${team.name}` : 'Personas de tu área'}</Eyebrow>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          {misCompaneros.map(u => (
+            <LiderPersonaRow key={u.id} persona={u} equipos={misEquipos} onSaveProfile={onSaveProfile} />
+          ))}
+          {misCompaneros.length === 0 && <div style={{ fontSize: 14, color: 'var(--text-dim)' }}>Todavía no hay más personas en tu área.</div>}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function LiderPersonaRow({ persona, equipos, onSaveProfile }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ puesto: persona.puesto, jefe: persona.jefe, equipoId: persona.equipoId || '', funciones: (persona.funciones || []).join('\n') });
+
+  function save() {
+    onSaveProfile(persona.id, {
+      name: persona.name, role: persona.role, teamId: persona.teamId,
+      puesto: form.puesto, jefe: form.jefe, equipoId: form.equipoId || null,
+      funciones: form.funciones.split('\n').map(s => s.trim()).filter(Boolean),
+    });
+  }
+
+  return (
+    <div style={{ borderBottom: '1px solid var(--border)', padding: '8px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13 }}>
+        <span style={{ flex: 1 }}>{persona.name} — {persona.puesto}</span>
+        <span style={{ color: 'var(--text-dim)', width: 100 }}>{ROLE_LABEL[persona.role]}</span>
+        <button onClick={() => setOpen(o => !o)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 3, fontSize: 12 }}>
+          {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />} Editar
+        </button>
+      </div>
+      {open && (
+        <div style={{ marginTop: 10, marginLeft: 20, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
+            <Input placeholder="Puesto" value={form.puesto} onChange={e => setForm({ ...form, puesto: e.target.value })} />
+            <Input placeholder="Jefe directo" value={form.jefe} onChange={e => setForm({ ...form, jefe: e.target.value })} />
+            <Select value={form.equipoId} onChange={e => setForm({ ...form, equipoId: e.target.value })}>
+              <option value="">Sin equipo específico</option>
+              {equipos.map(eq => <option key={eq.id} value={eq.id}>{eq.name}</option>)}
+            </Select>
+          </div>
+          <textarea
+            placeholder="Funciones clave (una por línea)" value={form.funciones} rows={3}
+            onChange={e => setForm({ ...form, funciones: e.target.value })}
+            style={{ width: '100%', boxSizing: 'border-box', background: '#fff', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text)', padding: '10px 12px', fontSize: 14, fontFamily: "'Plus Jakarta Sans', sans-serif", resize: 'vertical' }}
+          />
+          <Btn onClick={save} style={{ alignSelf: 'flex-start' }}>Guardar cambios</Btn>
+          <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>El rol y el área solo los puede cambiar un administrador.</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -763,22 +1006,27 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [teams, setTeams] = useState([]);
+  const [equipos, setEquipos] = useState([]);
   const [users, setUsers] = useState([]);
   const [kpis, setKpis] = useState([]);
   const [okrsEquipo, setOkrsEquipo] = useState([]);
   const [activities, setActivities] = useState([]);
-  const [view, setView] = useState('dpu');
+  const [empresaName, setEmpresaName] = useState(DEFAULT_COMPANY_NAME);
+  const [view, setView] = useState('inicio');
   const [loadError, setLoadError] = useState('');
 
   const fetchAll = useCallback(async (sess) => {
     setLoadError('');
-    const [{ data: teamRows, error: e1 }, { data: profileRows, error: e2 }] = await Promise.all([
+    const [{ data: teamRows, error: e1 }, { data: profileRows, error: e2 }, { data: equipoRows, error: e2b }, { data: empresaRows, error: e2c }] = await Promise.all([
       supabase.from('teams').select('*').order('bay'),
       supabase.from('profiles').select('*'),
+      supabase.from('equipos').select('*'),
+      supabase.from('empresa').select('*').limit(1),
     ]);
-    if (e1 || e2) { setLoadError((e1 || e2).message); return; }
+    if (e1 || e2 || e2b || e2c) { setLoadError((e1 || e2 || e2b || e2c).message); return; }
 
     const mappedTeams = (teamRows || []).map(mapTeam);
+    const mappedEquipos = (equipoRows || []).map(mapEquipo);
     const mappedUsers = (profileRows || []).map(mapProfile);
     const usersById = Object.fromEntries(mappedUsers.map(u => [u.id, u]));
 
@@ -790,10 +1038,12 @@ export default function App() {
     if (e3 || e4 || e5) { setLoadError((e3 || e4 || e5).message); return; }
 
     setTeams(mappedTeams);
+    setEquipos(mappedEquipos);
     setUsers(mappedUsers);
     setKpis((kpiRows || []).map(mapKpi));
     setOkrsEquipo((okrRows || []).map(mapOkr));
     setActivities((actRows || []).map(a => mapActivity(a, usersById)));
+    if (empresaRows && empresaRows[0]) setEmpresaName(empresaRows[0].name);
 
     const me = usersById[sess.user.id];
     setCurrentUser(me || null);
@@ -808,7 +1058,7 @@ export default function App() {
     const { data: sub } = supabase.auth.onAuthStateChange((_event, sess) => {
       setSession(sess);
       if (sess) { setLoading(true); fetchAll(sess).finally(() => setLoading(false)); }
-      else { setCurrentUser(null); setTeams([]); setUsers([]); setKpis([]); setOkrsEquipo([]); setActivities([]); }
+      else { setCurrentUser(null); setTeams([]); setEquipos([]); setUsers([]); setKpis([]); setOkrsEquipo([]); setActivities([]); }
     });
     return () => sub.subscription.unsubscribe();
   }, [fetchAll]);
@@ -862,10 +1112,25 @@ export default function App() {
     await supabase.from('teams').delete().eq('id', id);
     fetchAll(session);
   }
+  async function addEquipo(teamId, name) {
+    await supabase.from('equipos').insert({ team_id: teamId, name });
+    fetchAll(session);
+  }
+  async function removeEquipo(id) {
+    await supabase.from('equipos').delete().eq('id', id);
+    fetchAll(session);
+  }
+  async function saveEmpresa(name) {
+    const { data } = await supabase.from('empresa').select('id').limit(1);
+    if (data && data[0]) {
+      await supabase.from('empresa').update({ name }).eq('id', data[0].id);
+      fetchAll(session);
+    }
+  }
   async function saveProfile(id, fields) {
     await supabase.from('profiles').update({
       name: fields.name, puesto: fields.puesto, jefe: fields.jefe, role: fields.role,
-      team_id: fields.teamId, funciones: fields.funciones,
+      team_id: fields.teamId, equipo_id: fields.equipoId, funciones: fields.funciones,
     }).eq('id', id);
     fetchAll(session);
   }
@@ -894,7 +1159,7 @@ export default function App() {
   if (loading) {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)' }}>
-        {fontImport}Cargando {COMPANY_NAME} OS…
+        {fontImport}Cargando {empresaName} OS…
       </div>
     );
   }
@@ -903,24 +1168,25 @@ export default function App() {
     return (
       <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
         {fontImport}
-        <LoginScreen onLogin={() => {}} />
+        <LoginScreen onLogin={() => {}} companyName={empresaName} />
         {loadError && <div style={{ textAlign: 'center', color: 'var(--red)', fontSize: 13, marginTop: -8 }}>{loadError}</div>}
       </div>
     );
   }
 
   const isAdmin = currentUser.role === 'admin';
+  const isLider = currentUser.role === 'lider';
   const canManageActs = hasPerm(currentUser, 'gestionarActividades');
   const canSeeBSC = hasPerm(currentUser, 'verBSC');
   const NAV_FULL = [
-    { id: 'dpu', label: 'Mi DPU', icon: UserIcon },
-    { id: 'actividades', label: isAdmin ? 'Actividades' : canManageActs ? 'Actividades de tu área' : 'Mis actividades', icon: ClipboardList },
-    { id: 'kpis', label: 'KPI', icon: BarChart3 },
-    { id: 'okrs', label: 'OKR', icon: Target },
-    { id: 'bsc', label: 'Balanced Scorecard', icon: Boxes },
+    { id: 'inicio', label: 'Inicio', icon: Home },
+    { id: 'trabajo', label: 'Mi trabajo', icon: ClipboardList },
+    { id: 'desempeno', label: 'Desempeño', icon: BarChart3 },
+    { id: 'objetivos', label: 'Objetivos', icon: Target },
+    { id: 'equipo', label: 'Mi Equipo', icon: Users2 },
     { id: 'admin', label: 'Administración', icon: Settings },
   ];
-  const allowedIds = ['dpu', 'actividades', 'kpis', 'okrs', ...(canSeeBSC ? ['bsc'] : []), ...(isAdmin ? ['admin'] : [])];
+  const allowedIds = ['inicio', 'trabajo', 'desempeno', 'objetivos', ...(isLider ? ['equipo'] : []), ...(isAdmin ? ['admin'] : [])];
   const NAV = NAV_FULL.filter(n => allowedIds.includes(n.id));
   const team = teams.find(t => t.id === currentUser.teamId);
 
@@ -930,9 +1196,9 @@ export default function App() {
       <div className="no-print" style={{ width: 224, background: 'var(--panel-alt)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
         <div style={{ padding: '20px 16px', display: 'flex', alignItems: 'center', gap: 9 }}>
           <div style={{ width: 30, height: 30, borderRadius: '50%', border: '2px solid var(--text)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-            <span style={{ fontWeight: 800, fontSize: 14 }}>{COMPANY_NAME.charAt(0).toUpperCase()}</span>
+            <span style={{ fontWeight: 800, fontSize: 14 }}>{empresaName.charAt(0).toUpperCase()}</span>
           </div>
-          <span style={{ fontWeight: 800, fontSize: 19, letterSpacing: '-0.02em' }}>{COMPANY_NAME.toLowerCase()}<span style={{ color: 'var(--blue)' }}>OS</span></span>
+          <span style={{ fontWeight: 800, fontSize: 19, letterSpacing: '-0.02em' }}>{empresaName.toLowerCase()}<span style={{ color: 'var(--blue)' }}>OS</span></span>
         </div>
         <div style={{ flex: 1, padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 3 }}>
           {NAV.map(n => {
@@ -951,11 +1217,12 @@ export default function App() {
           })}
         </div>
         <div style={{ padding: 14, borderTop: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{currentUser.name}</div>
-          <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 12 }}>{ROLE_LABEL[currentUser.role]}{team ? ` · Área ${team.bay}` : ''}</div>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{currentUser.name} — {currentUser.puesto}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 12 }}>{ROLE_LABEL[currentUser.role]}{team ? ` · ${team.name}` : ''}</div>
           <button onClick={logout} style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#fff', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-dim)', padding: '8px 10px', cursor: 'pointer', fontSize: 13, width: '100%' }}>
             <LogOut size={13} /> Cerrar sesión
           </button>
+          <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 10, textAlign: 'center', opacity: 0.6 }}>{APP_VERSION}</div>
         </div>
       </div>
 
@@ -966,18 +1233,31 @@ export default function App() {
 
         {loadError && <div style={{ color: 'var(--red)', fontSize: 13, marginBottom: 12 }}>{loadError}</div>}
 
-        {view === 'dpu' && <DPUView user={currentUser} teams={teams} kpis={kpis} okrsEquipo={okrsEquipo} />}
-        {view === 'actividades' && (
+        {view === 'inicio' && (
+          <HomeView user={currentUser} teams={teams} equipos={equipos} kpis={kpis} okrsEquipo={okrsEquipo} activities={activities} onGo={setView} />
+        )}
+        {view === 'trabajo' && (
           <ActividadesView
             user={currentUser} teams={teams} users={users} activities={activities}
             onUpdateStatus={updateStatus} onAddActivity={addActivity} onRemoveActivity={removeActivity} onAddComment={addComment}
           />
         )}
-        {view === 'kpis' && <KPIsView user={currentUser} teams={teams} kpis={kpis} onUpdateActual={updateActual} />}
-        {view === 'okrs' && <OKRsView user={currentUser} teams={teams} okrsEquipo={okrsEquipo} onUpdateKrActual={updateKrActual} onAddOkr={addOkr} />}
-        {view === 'bsc' && (isAdmin || canSeeBSC) && <BSCView kpis={kpis} teams={teams} />}
+        {view === 'desempeno' && (
+          <DesempenoView
+            user={currentUser} teams={teams} equipos={equipos} kpis={kpis} okrsEquipo={okrsEquipo}
+            onUpdateActual={updateActual} isAdmin={isAdmin} canSeeBSC={canSeeBSC}
+          />
+        )}
+        {view === 'objetivos' && <OKRsView user={currentUser} teams={teams} okrsEquipo={okrsEquipo} onUpdateKrActual={updateKrActual} onAddOkr={addOkr} />}
+        {view === 'equipo' && isLider && (
+          <EquipoView user={currentUser} teams={teams} equipos={equipos} users={users} onSaveProfile={saveProfile} />
+        )}
         {view === 'admin' && isAdmin && (
-          <AdminView teams={teams} users={users} onAddTeam={addTeam} onRemoveTeam={removeTeam} onSaveProfile={saveProfile} onTogglePermiso={togglePermiso} />
+          <AdminView
+            empresaName={empresaName} teams={teams} equipos={equipos} users={users}
+            onSaveEmpresa={saveEmpresa} onAddTeam={addTeam} onRemoveTeam={removeTeam}
+            onAddEquipo={addEquipo} onRemoveEquipo={removeEquipo} onSaveProfile={saveProfile} onTogglePermiso={togglePermiso}
+          />
         )}
       </div>
     </div>
