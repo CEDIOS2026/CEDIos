@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Target, BarChart3, ClipboardList, Settings, LogOut, Home,
-  ShieldCheck, Lock, ChevronRight, ChevronDown, Plus, Trash2, User as UserIcon, Users2,
-  Landmark, Boxes, AlertTriangle, MessageSquare, Download, Printer
+  Lock, ChevronRight, ChevronDown, Plus, Trash2, User as UserIcon, Users2,
+  Landmark, Boxes, AlertTriangle, MessageSquare, Download, Printer, FileText
 } from 'lucide-react';
 import { supabase } from './supabaseClient.js';
 
@@ -25,7 +25,7 @@ const PERMISOS_LABEL = {
   verBSC: 'Ver Balanced Scorecard',
 };
 const DEFAULT_COMPANY_NAME = 'Cedi';
-const APP_VERSION = 'v3';
+const APP_VERSION = 'v4';
 
 // ---------------------------------------------------------------------------
 // HELPERS
@@ -72,6 +72,7 @@ function mapProfile(p) {
     id: p.id, username: p.username, name: p.name, role: p.role, teamId: p.team_id, equipoId: p.equipo_id,
     puesto: p.puesto, jefe: p.jefe, funciones: p.funciones || [],
     permisos: { ...PERMISOS_DEFAULT, ...(p.permisos || {}) },
+    avatarUrl: p.avatar_url || null, dpuPdfPath: p.dpu_pdf_path || null,
   };
 }
 function mapKpi(k) {
@@ -183,6 +184,74 @@ function EditableNumber({ value, onCommit, style }) {
   const [local, setLocal] = useState(String(value));
   useEffect(() => { setLocal(String(value)); }, [value]);
   return <Input type="number" step="any" value={local} onChange={e => setLocal(e.target.value)} onBlur={() => onCommit(local)} style={style} />;
+}
+
+// ---------------------------------------------------------------------------
+// FOTO DE PERFIL Y DPU EN PDF
+// ---------------------------------------------------------------------------
+function Avatar({ url, name, size = 44 }) {
+  if (url) {
+    return <img src={url} alt={name} style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />;
+  }
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: '50%', background: 'var(--panel-alt)', border: '1px solid var(--border)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontWeight: 700, color: 'var(--text-dim)',
+      fontSize: size * 0.4,
+    }}>
+      {(name || '?').charAt(0).toUpperCase()}
+    </div>
+  );
+}
+
+function AvatarUploader({ persona, onUploadAvatar }) {
+  const [busy, setBusy] = useState(false);
+  const inputId = `avatar-${persona.id}`;
+
+  async function handleFile(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setBusy(true);
+    await onUploadAvatar(persona.id, file);
+    setBusy(false);
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <Avatar url={persona.avatarUrl} name={persona.name} size={48} />
+      <label htmlFor={inputId} style={{ cursor: 'pointer' }}>
+        <span style={{ fontSize: 12, color: 'var(--blue)', fontWeight: 600 }}>{busy ? 'Subiendo…' : 'Cambiar foto'}</span>
+        <input id={inputId} type="file" accept="image/*" onChange={handleFile} style={{ display: 'none' }} disabled={busy} />
+      </label>
+    </div>
+  );
+}
+
+function DpuPdfUploader({ persona, onUploadDpuPdf, onViewDpuPdf }) {
+  const [busy, setBusy] = useState(false);
+  const inputId = `dpu-pdf-${persona.id}`;
+
+  async function handleFile(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setBusy(true);
+    await onUploadDpuPdf(persona.id, file);
+    setBusy(false);
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+      {persona.dpuPdfPath && (
+        <Btn variant="ghost" onClick={() => onViewDpuPdf(persona.dpuPdfPath)}><FileText size={14} /> Ver DPU en PDF</Btn>
+      )}
+      <label htmlFor={inputId} style={{ cursor: 'pointer' }}>
+        <span style={{ fontSize: 12, color: 'var(--blue)', fontWeight: 600 }}>
+          {busy ? 'Subiendo…' : persona.dpuPdfPath ? 'Reemplazar PDF' : 'Subir DPU en PDF'}
+        </span>
+        <input id={inputId} type="file" accept="application/pdf" onChange={handleFile} style={{ display: 'none' }} disabled={busy} />
+      </label>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -330,7 +399,7 @@ function HomeView({ user, teams, equipos, kpis, okrsEquipo, activities, onGo }) 
   );
 }
 
-function DPUView({ user, teams, equipos, kpis, okrsEquipo }) {
+function DPUView({ user, teams, equipos, kpis, okrsEquipo, onUploadAvatar, onUploadDpuPdf, onViewDpuPdf }) {
   const team = teams.find(t => t.id === user.teamId);
   const equipo = equipos.find(e => e.id === user.equipoId);
   const myKpis = kpis.filter(k => (user.teamId ? k.teamId === user.teamId : k.teamId === null));
@@ -341,6 +410,9 @@ function DPUView({ user, teams, equipos, kpis, okrsEquipo }) {
       <AlertsBanner kpis={myKpis} />
       <Panel>
         <Eyebrow>Descripción de Puesto y Unidad · DPU</Eyebrow>
+        <div className="no-print" style={{ marginBottom: 16 }}>
+          <AvatarUploader persona={user} onUploadAvatar={onUploadAvatar} />
+        </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, marginBottom: 14 }}>
           <div><div style={{ fontSize: 12, color: 'var(--text-dim)' }}>Nombre</div><div style={{ fontSize: 18, fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 600 }}>{user.name}</div></div>
           <div><div style={{ fontSize: 12, color: 'var(--text-dim)' }}>Puesto</div><div style={{ fontSize: 18, fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 600 }}>{user.puesto}</div></div>
@@ -352,6 +424,9 @@ function DPUView({ user, teams, equipos, kpis, okrsEquipo }) {
         <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
           {user.funciones.map((f, i) => <li key={i} style={{ fontSize: 14 }}>{f}</li>)}
         </ul>
+        <div className="no-print" style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
+          <DpuPdfUploader persona={user} onUploadDpuPdf={onUploadDpuPdf} onViewDpuPdf={onViewDpuPdf} />
+        </div>
       </Panel>
 
       <Panel>
@@ -743,7 +818,7 @@ function BSCView({ kpis, teams }) {
 // ---------------------------------------------------------------------------
 // ADMIN VIEW
 // ---------------------------------------------------------------------------
-function UserRow({ user, team, teams, equipos, onSaveProfile, onTogglePermiso }) {
+function UserRow({ user, team, teams, equipos, onSaveProfile, onTogglePermiso, onUploadAvatar, onUploadDpuPdf, onViewDpuPdf }) {
   const [open, setOpen] = useState(false);
   const isAdmin = user.role === 'admin';
   const isLider = user.role === 'lider';
@@ -762,7 +837,7 @@ function UserRow({ user, team, teams, equipos, onSaveProfile, onTogglePermiso })
   return (
     <div style={{ borderBottom: '1px solid var(--border)', padding: '8px 0' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13 }}>
-        <ShieldCheck size={14} color="var(--text-dim)" />
+        <Avatar url={user.avatarUrl} name={user.name} size={28} />
         <span style={{ flex: 1 }}>{user.name} — {user.puesto}</span>
         <span style={{ color: 'var(--text-dim)', width: 110 }}>{ROLE_LABEL[user.role]}</span>
         <span style={{ color: 'var(--text-dim)', width: 90 }}>{team ? team.name : '—'}</span>
@@ -773,6 +848,7 @@ function UserRow({ user, team, teams, equipos, onSaveProfile, onTogglePermiso })
       {open && (
         <div style={{ marginTop: 10, marginLeft: 24, display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>Usuario: {user.username}</div>
+          <AvatarUploader persona={user} onUploadAvatar={onUploadAvatar} />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
             <Input placeholder="Nombre completo" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
             <Select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}>
@@ -797,6 +873,7 @@ function UserRow({ user, team, teams, equipos, onSaveProfile, onTogglePermiso })
             style={{ width: '100%', boxSizing: 'border-box', background: '#fff', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text)', padding: '10px 12px', fontSize: 14, fontFamily: "'Plus Jakarta Sans', sans-serif", resize: 'vertical' }}
           />
           <Btn onClick={save} style={{ alignSelf: 'flex-start' }}>Guardar cambios</Btn>
+          <DpuPdfUploader persona={user} onUploadDpuPdf={onUploadDpuPdf} onViewDpuPdf={onViewDpuPdf} />
 
           {isLider && (
             <div style={{ fontSize: 12, color: 'var(--text-dim)', background: 'var(--panel-alt)', borderRadius: 10, padding: '8px 10px' }}>
@@ -823,7 +900,7 @@ function UserRow({ user, team, teams, equipos, onSaveProfile, onTogglePermiso })
   );
 }
 
-function AdminView({ empresaName, teams, equipos, users, onSaveEmpresa, onAddTeam, onRemoveTeam, onAddEquipo, onRemoveEquipo, onSaveProfile, onTogglePermiso }) {
+function AdminView({ empresaName, teams, equipos, users, onSaveEmpresa, onAddTeam, onRemoveTeam, onAddEquipo, onRemoveEquipo, onSaveProfile, onTogglePermiso, onUploadAvatar, onUploadDpuPdf, onViewDpuPdf }) {
   const [newTeamName, setNewTeamName] = useState('');
   const [newEquipoTeamId, setNewEquipoTeamId] = useState('');
   const [newEquipoName, setNewEquipoName] = useState('');
@@ -889,7 +966,11 @@ function AdminView({ empresaName, teams, equipos, users, onSaveEmpresa, onAddTea
         <Eyebrow>Usuarios y permisos</Eyebrow>
         <div style={{ display: 'flex', flexDirection: 'column', marginBottom: 12 }}>
           {users.map(u => (
-            <UserRow key={u.id} user={u} team={teams.find(t => t.id === u.teamId)} teams={teams} equipos={equipos} onSaveProfile={onSaveProfile} onTogglePermiso={onTogglePermiso} />
+            <UserRow
+              key={u.id} user={u} team={teams.find(t => t.id === u.teamId)} teams={teams} equipos={equipos}
+              onSaveProfile={onSaveProfile} onTogglePermiso={onTogglePermiso}
+              onUploadAvatar={onUploadAvatar} onUploadDpuPdf={onUploadDpuPdf} onViewDpuPdf={onViewDpuPdf}
+            />
           ))}
         </div>
         <div style={{ fontSize: 13, color: 'var(--text-dim)', background: 'var(--panel-alt)', borderRadius: 12, padding: 14, lineHeight: 1.6 }}>
@@ -927,14 +1008,19 @@ function DesempenoView(props) {
           </button>
         ))}
       </div>
-      {tab === 'dpu' && <DPUView user={props.user} teams={props.teams} equipos={props.equipos} kpis={props.kpis} okrsEquipo={props.okrsEquipo} />}
+      {tab === 'dpu' && (
+        <DPUView
+          user={props.user} teams={props.teams} equipos={props.equipos} kpis={props.kpis} okrsEquipo={props.okrsEquipo}
+          onUploadAvatar={props.onUploadAvatar} onUploadDpuPdf={props.onUploadDpuPdf} onViewDpuPdf={props.onViewDpuPdf}
+        />
+      )}
       {tab === 'kpis' && <KPIsView user={props.user} teams={props.teams} kpis={props.kpis} onUpdateActual={props.onUpdateActual} />}
       {tab === 'bsc' && (isAdmin || canSeeBSC) && <BSCView kpis={props.kpis} teams={props.teams} />}
     </div>
   );
 }
 
-function EquipoView({ user, teams, equipos, users, onSaveProfile }) {
+function EquipoView({ user, teams, equipos, users, onSaveProfile, onUploadAvatar, onUploadDpuPdf, onViewDpuPdf }) {
   const team = teams.find(t => t.id === user.teamId);
   const misCompaneros = users.filter(u => u.teamId === user.teamId && u.id !== user.id);
   const misEquipos = equipos.filter(e => e.teamId === user.teamId);
@@ -945,7 +1031,10 @@ function EquipoView({ user, teams, equipos, users, onSaveProfile }) {
         <Eyebrow>{team ? `Personas en ${team.name}` : 'Personas de tu área'}</Eyebrow>
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           {misCompaneros.map(u => (
-            <LiderPersonaRow key={u.id} persona={u} equipos={misEquipos} onSaveProfile={onSaveProfile} />
+            <LiderPersonaRow
+              key={u.id} persona={u} equipos={misEquipos} onSaveProfile={onSaveProfile}
+              onUploadAvatar={onUploadAvatar} onUploadDpuPdf={onUploadDpuPdf} onViewDpuPdf={onViewDpuPdf}
+            />
           ))}
           {misCompaneros.length === 0 && <div style={{ fontSize: 14, color: 'var(--text-dim)' }}>Todavía no hay más personas en tu área.</div>}
         </div>
@@ -954,7 +1043,7 @@ function EquipoView({ user, teams, equipos, users, onSaveProfile }) {
   );
 }
 
-function LiderPersonaRow({ persona, equipos, onSaveProfile }) {
+function LiderPersonaRow({ persona, equipos, onSaveProfile, onUploadAvatar, onUploadDpuPdf, onViewDpuPdf }) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ puesto: persona.puesto, jefe: persona.jefe, equipoId: persona.equipoId || '', funciones: (persona.funciones || []).join('\n') });
 
@@ -969,6 +1058,7 @@ function LiderPersonaRow({ persona, equipos, onSaveProfile }) {
   return (
     <div style={{ borderBottom: '1px solid var(--border)', padding: '8px 0' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13 }}>
+        <Avatar url={persona.avatarUrl} name={persona.name} size={28} />
         <span style={{ flex: 1 }}>{persona.name} — {persona.puesto}</span>
         <span style={{ color: 'var(--text-dim)', width: 100 }}>{ROLE_LABEL[persona.role]}</span>
         <button onClick={() => setOpen(o => !o)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 3, fontSize: 12 }}>
@@ -977,6 +1067,7 @@ function LiderPersonaRow({ persona, equipos, onSaveProfile }) {
       </div>
       {open && (
         <div style={{ marginTop: 10, marginLeft: 20, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <AvatarUploader persona={persona} onUploadAvatar={onUploadAvatar} />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
             <Input placeholder="Puesto" value={form.puesto} onChange={e => setForm({ ...form, puesto: e.target.value })} />
             <Input placeholder="Jefe directo" value={form.jefe} onChange={e => setForm({ ...form, jefe: e.target.value })} />
@@ -991,6 +1082,7 @@ function LiderPersonaRow({ persona, equipos, onSaveProfile }) {
             style={{ width: '100%', boxSizing: 'border-box', background: '#fff', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text)', padding: '10px 12px', fontSize: 14, fontFamily: "'Plus Jakarta Sans', sans-serif", resize: 'vertical' }}
           />
           <Btn onClick={save} style={{ alignSelf: 'flex-start' }}>Guardar cambios</Btn>
+          <DpuPdfUploader persona={persona} onUploadDpuPdf={onUploadDpuPdf} onViewDpuPdf={onViewDpuPdf} />
           <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>El rol y el área solo los puede cambiar un administrador.</div>
         </div>
       )}
@@ -1141,6 +1233,27 @@ export default function App() {
     await supabase.from('profiles').update({ permisos: next }).eq('id', userId);
     fetchAll(session);
   }
+  async function uploadAvatar(personId, file) {
+    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+    const path = `${personId}/avatar.${ext}`;
+    const { error } = await supabase.storage.from('avatars').upload(path, file, { upsert: true });
+    if (error) { setLoadError(error.message); return; }
+    const { data } = supabase.storage.from('avatars').getPublicUrl(path);
+    await supabase.from('profiles').update({ avatar_url: `${data.publicUrl}?t=${Date.now()}` }).eq('id', personId);
+    fetchAll(session);
+  }
+  async function uploadDpuPdf(personId, file) {
+    const path = `${personId}/dpu.pdf`;
+    const { error } = await supabase.storage.from('dpu-docs').upload(path, file, { upsert: true });
+    if (error) { setLoadError(error.message); return; }
+    await supabase.from('profiles').update({ dpu_pdf_path: path }).eq('id', personId);
+    fetchAll(session);
+  }
+  async function viewDpuPdf(path) {
+    const { data, error } = await supabase.storage.from('dpu-docs').createSignedUrl(path, 60);
+    if (error) { setLoadError(error.message); return; }
+    window.open(data.signedUrl, '_blank');
+  }
 
   const fontImport = (
     <style>{`
@@ -1217,8 +1330,13 @@ export default function App() {
           })}
         </div>
         <div style={{ padding: 14, borderTop: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{currentUser.name} — {currentUser.puesto}</div>
-          <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 12 }}>{ROLE_LABEL[currentUser.role]}{team ? ` · ${team.name}` : ''}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <Avatar url={currentUser.avatarUrl} name={currentUser.name} size={32} />
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{currentUser.name} — {currentUser.puesto}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>{ROLE_LABEL[currentUser.role]}{team ? ` · ${team.name}` : ''}</div>
+            </div>
+          </div>
           <button onClick={logout} style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#fff', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-dim)', padding: '8px 10px', cursor: 'pointer', fontSize: 13, width: '100%' }}>
             <LogOut size={13} /> Cerrar sesión
           </button>
@@ -1246,17 +1364,22 @@ export default function App() {
           <DesempenoView
             user={currentUser} teams={teams} equipos={equipos} kpis={kpis} okrsEquipo={okrsEquipo}
             onUpdateActual={updateActual} isAdmin={isAdmin} canSeeBSC={canSeeBSC}
+            onUploadAvatar={uploadAvatar} onUploadDpuPdf={uploadDpuPdf} onViewDpuPdf={viewDpuPdf}
           />
         )}
         {view === 'objetivos' && <OKRsView user={currentUser} teams={teams} okrsEquipo={okrsEquipo} onUpdateKrActual={updateKrActual} onAddOkr={addOkr} />}
         {view === 'equipo' && isLider && (
-          <EquipoView user={currentUser} teams={teams} equipos={equipos} users={users} onSaveProfile={saveProfile} />
+          <EquipoView
+            user={currentUser} teams={teams} equipos={equipos} users={users} onSaveProfile={saveProfile}
+            onUploadAvatar={uploadAvatar} onUploadDpuPdf={uploadDpuPdf} onViewDpuPdf={viewDpuPdf}
+          />
         )}
         {view === 'admin' && isAdmin && (
           <AdminView
             empresaName={empresaName} teams={teams} equipos={equipos} users={users}
             onSaveEmpresa={saveEmpresa} onAddTeam={addTeam} onRemoveTeam={removeTeam}
             onAddEquipo={addEquipo} onRemoveEquipo={removeEquipo} onSaveProfile={saveProfile} onTogglePermiso={togglePermiso}
+            onUploadAvatar={uploadAvatar} onUploadDpuPdf={uploadDpuPdf} onViewDpuPdf={viewDpuPdf}
           />
         )}
       </div>
