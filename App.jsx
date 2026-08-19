@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Target, BarChart3, ClipboardList, Settings, LogOut,
+  Target, BarChart3, ClipboardList, Settings, LogOut, Home,
   ShieldCheck, Lock, ChevronRight, ChevronDown, Plus, Trash2, User as UserIcon, Users2,
   Landmark, Boxes, AlertTriangle, MessageSquare, Download, Printer
 } from 'lucide-react';
@@ -25,6 +25,7 @@ const PERMISOS_LABEL = {
   verBSC: 'Ver Balanced Scorecard',
 };
 const DEFAULT_COMPANY_NAME = 'Cedi';
+const APP_VERSION = 'v3';
 
 // ---------------------------------------------------------------------------
 // HELPERS
@@ -241,6 +242,94 @@ function LoginScreen({ onLogin, companyName }) {
 // ---------------------------------------------------------------------------
 // DPU VIEW
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// INICIO (Home) — el punto de partida del día, no un dashboard más
+// ---------------------------------------------------------------------------
+function HomeView({ user, teams, equipos, kpis, okrsEquipo, activities, onGo }) {
+  const hour = new Date().getHours();
+  const saludo = hour < 12 ? 'Buenos días' : hour < 19 ? 'Buenas tardes' : 'Buenas noches';
+  const primerNombre = (user.name || '').split(' ')[0];
+  const hoyStr = new Date().toISOString().slice(0, 10);
+
+  const misActividades = activities.filter(a => a.asignadoAId === user.id && a.estado !== 'completada');
+  const vencenHoy = misActividades.filter(a => a.fecha === hoyStr);
+
+  const myKpis = kpis.filter(k => (user.teamId ? k.teamId === user.teamId : k.teamId === null));
+  const onCount = myKpis.filter(k => kpiStatus(k) === 'on').length;
+  const atRisk = myKpis.filter(k => kpiStatus(k) !== 'on');
+
+  const myOkrs = user.teamId ? okrsEquipo.filter(o => o.teamId === user.teamId) : okrsEquipo;
+  const allKrs = myOkrs.flatMap(o => o.krs);
+  const avgProgress = allKrs.length ? Math.round(allKrs.reduce((s, kr) => s + krProgress(kr), 0) / allKrs.length) : null;
+
+  const team = teams.find(t => t.id === user.teamId);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div>
+        <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: '-0.02em' }}>{saludo}, {primerNombre}</div>
+        <div style={{ fontSize: 14, color: 'var(--text-dim)', marginTop: 2 }}>{user.puesto}{team ? ` · ${team.name}` : ''}</div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16 }}>
+        <Panel>
+          <Eyebrow>Hoy</Eyebrow>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <button onClick={() => onGo('trabajo')} style={{ all: 'unset', cursor: 'pointer', fontSize: 15 }}>
+              <strong>{misActividades.length}</strong> actividad{misActividades.length === 1 ? '' : 'es'} pendiente{misActividades.length === 1 ? '' : 's'}
+            </button>
+            {vencenHoy.length > 0 && (
+              <div style={{ fontSize: 13, color: 'var(--red)' }}>{vencenHoy.length} vence{vencenHoy.length === 1 ? '' : 'n'} hoy</div>
+            )}
+            {misActividades.length === 0 && <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>Sin pendientes por ahora.</div>}
+          </div>
+        </Panel>
+
+        <Panel>
+          <Eyebrow>Tu desempeño</Eyebrow>
+          <button onClick={() => onGo('desempeno')} style={{ all: 'unset', cursor: 'pointer', display: 'block', width: '100%' }}>
+            <div style={{ fontSize: 15 }}><strong>{onCount}</strong> de <strong>{myKpis.length}</strong> KPI en meta</div>
+            {atRisk.length > 0 && <div style={{ fontSize: 13, color: 'var(--amber)', marginTop: 4 }}>{atRisk.length} requiere{atRisk.length === 1 ? '' : 'n'} atención</div>}
+          </button>
+        </Panel>
+
+        <Panel>
+          <Eyebrow>Tus objetivos</Eyebrow>
+          <button onClick={() => onGo('objetivos')} style={{ all: 'unset', cursor: 'pointer', display: 'block', width: '100%' }}>
+            {avgProgress !== null ? (
+              <>
+                <div style={{ fontSize: 15, marginBottom: 6 }}>OKR del periodo: <strong>{avgProgress}%</strong></div>
+                <ProgressBar pct={avgProgress} color={avgProgress >= 80 ? 'var(--green)' : avgProgress >= 50 ? 'var(--amber)' : 'var(--red)'} />
+                <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 6 }}>
+                  {avgProgress >= 80 ? 'En trayectoria' : avgProgress >= 50 ? 'Requiere seguimiento' : 'Atrás de lo esperado'}
+                </div>
+              </>
+            ) : <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>Sin OKR definidos todavía.</div>}
+          </button>
+        </Panel>
+      </div>
+
+      {atRisk.length > 0 && (
+        <Panel>
+          <Eyebrow>Atención</Eyebrow>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {atRisk.map(k => {
+              const s = kpiStatus(k);
+              return (
+                <div key={k.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14 }}>
+                  <AlertTriangle size={15} color={STATUS_COLOR[s]} />
+                  <span style={{ flex: 1 }}>{k.name}</span>
+                  <span style={{ fontWeight: 600, color: STATUS_COLOR[s] }}>{k.actual}{k.unidad} vs meta {k.meta}{k.unidad}</span>
+                </div>
+              );
+            })}
+          </div>
+        </Panel>
+      )}
+    </div>
+  );
+}
+
 function DPUView({ user, teams, equipos, kpis, okrsEquipo }) {
   const team = teams.find(t => t.id === user.teamId);
   const equipo = equipos.find(e => e.id === user.equipoId);
@@ -814,8 +903,37 @@ function AdminView({ empresaName, teams, equipos, users, onSaveEmpresa, onAddTea
 }
 
 // ---------------------------------------------------------------------------
-// MI EQUIPO (vista para Líderes: gestionar a la gente de su propia área)
+// DESEMPEÑO — contenedor con pestañas internas: Mi DPU / KPI / Balanced Scorecard
 // ---------------------------------------------------------------------------
+function DesempenoView(props) {
+  const { user, canSeeBSC, isAdmin } = props;
+  const [tab, setTab] = useState('dpu');
+  const tabs = [
+    { id: 'dpu', label: 'Mi DPU' },
+    { id: 'kpis', label: 'KPI' },
+    ...((isAdmin || canSeeBSC) ? [{ id: 'bsc', label: 'Balanced Scorecard' }] : []),
+  ];
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div className="no-print" style={{ display: 'flex', gap: 6, borderBottom: '1px solid var(--border)', paddingBottom: 2 }}>
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)} style={{
+            background: 'none', border: 'none', cursor: 'pointer', padding: '8px 4px', marginRight: 14,
+            fontSize: 14, fontWeight: tab === t.id ? 700 : 500, color: tab === t.id ? 'var(--text)' : 'var(--text-dim)',
+            borderBottom: tab === t.id ? '2px solid var(--blue)' : '2px solid transparent',
+          }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {tab === 'dpu' && <DPUView user={props.user} teams={props.teams} equipos={props.equipos} kpis={props.kpis} okrsEquipo={props.okrsEquipo} />}
+      {tab === 'kpis' && <KPIsView user={props.user} teams={props.teams} kpis={props.kpis} onUpdateActual={props.onUpdateActual} />}
+      {tab === 'bsc' && (isAdmin || canSeeBSC) && <BSCView kpis={props.kpis} teams={props.teams} />}
+    </div>
+  );
+}
+
 function EquipoView({ user, teams, equipos, users, onSaveProfile }) {
   const team = teams.find(t => t.id === user.teamId);
   const misCompaneros = users.filter(u => u.teamId === user.teamId && u.id !== user.id);
@@ -894,7 +1012,7 @@ export default function App() {
   const [okrsEquipo, setOkrsEquipo] = useState([]);
   const [activities, setActivities] = useState([]);
   const [empresaName, setEmpresaName] = useState(DEFAULT_COMPANY_NAME);
-  const [view, setView] = useState('dpu');
+  const [view, setView] = useState('inicio');
   const [loadError, setLoadError] = useState('');
 
   const fetchAll = useCallback(async (sess) => {
@@ -1061,15 +1179,14 @@ export default function App() {
   const canManageActs = hasPerm(currentUser, 'gestionarActividades');
   const canSeeBSC = hasPerm(currentUser, 'verBSC');
   const NAV_FULL = [
-    { id: 'dpu', label: 'Mi DPU', icon: UserIcon },
-    { id: 'actividades', label: isAdmin ? 'Actividades' : canManageActs ? 'Actividades de tu área' : 'Mis actividades', icon: ClipboardList },
-    { id: 'kpis', label: 'KPI', icon: BarChart3 },
-    { id: 'okrs', label: 'OKR', icon: Target },
-    { id: 'bsc', label: 'Balanced Scorecard', icon: Boxes },
+    { id: 'inicio', label: 'Inicio', icon: Home },
+    { id: 'trabajo', label: 'Mi trabajo', icon: ClipboardList },
+    { id: 'desempeno', label: 'Desempeño', icon: BarChart3 },
+    { id: 'objetivos', label: 'Objetivos', icon: Target },
     { id: 'equipo', label: 'Mi Equipo', icon: Users2 },
     { id: 'admin', label: 'Administración', icon: Settings },
   ];
-  const allowedIds = ['dpu', 'actividades', 'kpis', 'okrs', ...(canSeeBSC ? ['bsc'] : []), ...(isLider ? ['equipo'] : []), ...(isAdmin ? ['admin'] : [])];
+  const allowedIds = ['inicio', 'trabajo', 'desempeno', 'objetivos', ...(isLider ? ['equipo'] : []), ...(isAdmin ? ['admin'] : [])];
   const NAV = NAV_FULL.filter(n => allowedIds.includes(n.id));
   const team = teams.find(t => t.id === currentUser.teamId);
 
@@ -1105,6 +1222,7 @@ export default function App() {
           <button onClick={logout} style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#fff', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-dim)', padding: '8px 10px', cursor: 'pointer', fontSize: 13, width: '100%' }}>
             <LogOut size={13} /> Cerrar sesión
           </button>
+          <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 10, textAlign: 'center', opacity: 0.6 }}>{APP_VERSION}</div>
         </div>
       </div>
 
@@ -1115,16 +1233,22 @@ export default function App() {
 
         {loadError && <div style={{ color: 'var(--red)', fontSize: 13, marginBottom: 12 }}>{loadError}</div>}
 
-        {view === 'dpu' && <DPUView user={currentUser} teams={teams} equipos={equipos} kpis={kpis} okrsEquipo={okrsEquipo} />}
-        {view === 'actividades' && (
+        {view === 'inicio' && (
+          <HomeView user={currentUser} teams={teams} equipos={equipos} kpis={kpis} okrsEquipo={okrsEquipo} activities={activities} onGo={setView} />
+        )}
+        {view === 'trabajo' && (
           <ActividadesView
             user={currentUser} teams={teams} users={users} activities={activities}
             onUpdateStatus={updateStatus} onAddActivity={addActivity} onRemoveActivity={removeActivity} onAddComment={addComment}
           />
         )}
-        {view === 'kpis' && <KPIsView user={currentUser} teams={teams} kpis={kpis} onUpdateActual={updateActual} />}
-        {view === 'okrs' && <OKRsView user={currentUser} teams={teams} okrsEquipo={okrsEquipo} onUpdateKrActual={updateKrActual} onAddOkr={addOkr} />}
-        {view === 'bsc' && (isAdmin || canSeeBSC) && <BSCView kpis={kpis} teams={teams} />}
+        {view === 'desempeno' && (
+          <DesempenoView
+            user={currentUser} teams={teams} equipos={equipos} kpis={kpis} okrsEquipo={okrsEquipo}
+            onUpdateActual={updateActual} isAdmin={isAdmin} canSeeBSC={canSeeBSC}
+          />
+        )}
+        {view === 'objetivos' && <OKRsView user={currentUser} teams={teams} okrsEquipo={okrsEquipo} onUpdateKrActual={updateKrActual} onAddOkr={addOkr} />}
         {view === 'equipo' && isLider && (
           <EquipoView user={currentUser} teams={teams} equipos={equipos} users={users} onSaveProfile={saveProfile} />
         )}
